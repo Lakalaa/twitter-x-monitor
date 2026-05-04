@@ -70,13 +70,14 @@ def get_scraper():
         add_log("WARNING: Scweet not installed — scraping unavailable")
         return None
     config = load_config()
+    # Prefer config file over env var — env var may hold a stale bearer token
     auth_token = (
-        os.environ.get("TWITTER_AUTH_TOKEN", "")
-        or config.get("twitter_auth_token", "")
+        config.get("twitter_auth_token", "")
+        or os.environ.get("TWITTER_AUTH_TOKEN", "")
     )
     ct0 = (
-        os.environ.get("TWITTER_CT0", "")
-        or config.get("twitter_ct0", "")
+        config.get("twitter_ct0", "")
+        or os.environ.get("TWITTER_CT0", "")
     )
     scfg = ScweetConfig(concurrency=2, save_dir="outputs", save_format="json", min_delay_s=2.0)
 
