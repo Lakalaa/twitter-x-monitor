@@ -8,6 +8,7 @@ HOW TO USE:
 """
 
 import asyncio
+import html as html_mod
 import json
 import os
 import sys
@@ -149,19 +150,21 @@ def differentiate_connections(followers: list, following: list) -> dict:
     }
 
 
-def _format_user_line(u: dict, icon: str = "•") -> str:
+def _format_user_line_html(u: dict, icon: str = "•") -> str:
+    """Return one HTML-formatted line; username is a clickable hyperlink."""
     username  = u.get("username", "unknown")
     name      = u.get("name", "")
     followers = u.get("followers_count", 0) or 0
     verified  = "✓" if u.get("blue_verified") else ""
     protected = "🔒" if u.get("protected") else ""
     link      = profile_link(username)
-    line = f"{icon} @{username} {verified}{protected}"
-    if name and name != username:
-        line += f" ({name})"
+    safe_name = html_mod.escape(name) if name else ""
+    # Clickable username as the hyperlink anchor
+    line = f'{icon} <a href="{link}">@{html_mod.escape(username)}</a> {verified}{protected}'
+    if safe_name and safe_name.lower() != username.lower():
+        line += f" ({safe_name})"
     if followers:
         line += f" — {followers:,} flw"
-    line += f"\n   {link}"
     return line
 
 
@@ -180,12 +183,12 @@ async def _send_user_list_batched(
     for i in range(0, total, batch_size):
         batch = users[i : i + batch_size]
         lines = [f"{icon} {i+1}–{min(i+batch_size, total)} of {total:,}\n"]
-        lines += [_format_user_line(u, "•") for u in batch]
+        lines += [_format_user_line_html(u, "•") for u in batch]
         msg = "\n".join(lines)
         if len(msg) > 4000:
             msg = msg[:4000] + "\n…(truncated)"
         try:
-            await bot.send_message(chat_id=chat_id, text=msg, disable_web_page_preview=True)
+            await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML", disable_web_page_preview=True)
             await asyncio.sleep(0.5)
         except TelegramError as e:
             print(f"  ✗ Telegram error: {e}")
@@ -271,27 +274,14 @@ async def send_users_to_telegram(users: list, list_type: str, target_account: st
         lines = [f"👥 {list_type} {i+1}–{min(i+batch_size, total)} of {total:,} (@{target_account})\n"]
 
         for u in batch:
-            username = u.get("username", "unknown")
-            name = u.get("name", "")
-            followers = u.get("followers_count", 0) or 0
-            verified = "✓" if u.get("blue_verified") else ""
-            protected = "🔒" if u.get("protected") else ""
-            link = profile_link(username)
-
-            line = f"• @{username} {verified}{protected}"
-            if name and name != username:
-                line += f" ({name})"
-            if followers:
-                line += f" — {followers:,} followers"
-            line += f"\n  🔗 {link}"
-            lines.append(line)
+            lines.append(_format_user_line_html(u, "•"))
 
         msg = "\n".join(lines)
         if len(msg) > 4000:
             msg = msg[:4000] + "\n... (truncated)"
 
         try:
-            await bot.send_message(chat_id=chat_id, text=msg, disable_web_page_preview=True)
+            await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML", disable_web_page_preview=True)
             await asyncio.sleep(0.5)
         except TelegramError as e:
             print(f"  ✗ Telegram error on batch {i}: {e}")
@@ -316,29 +306,28 @@ async def send_new_users_alert(new_users: list, list_type: str, target_account: 
     )
 
     for u in new_users:
-        username = u.get("username", "unknown")
-        name = u.get("name", "")
+        username  = u.get("username", "unknown")
+        name      = u.get("name", "")
         followers = u.get("followers_count", 0) or 0
         following = u.get("following_count", 0) or 0
-        bio = u.get("description", "")
-        created = u.get("created_at", "")
-        verified = "✓ Verified" if u.get("blue_verified") else ""
+        bio       = u.get("description", "")
+        created   = u.get("created_at", "")
+        verified  = "✓ Verified" if u.get("blue_verified") else ""
         protected = "🔒 Private" if u.get("protected") else ""
-        link = profile_link(username)
+        link      = profile_link(username)
 
         msg = (
             f"🆕 New {list_type[:-1] if list_type.endswith('s') else list_type}!\n\n"
-            f"👤 @{username} {verified}{protected}"
-            + (f"\nName: {name}" if name and name != username else "")
+            f'👤 <a href="{link}">@{html_mod.escape(username)}</a> {verified}{protected}'
+            + (f"\nName: {html_mod.escape(name)}" if name and name.lower() != username.lower() else "")
             + f"\nFollowers: {followers:,} | Following: {following:,}"
-            + (f"\nBio: {bio[:150]}" if bio else "")
+            + (f"\nBio: {html_mod.escape(bio[:150])}" if bio else "")
             + (f"\nJoined X: {created}" if created else "")
-            + f"\n🔗 {link}"
         )
 
         try:
             bot = get_bot()
-            await bot.send_message(chat_id=get_chat_id(), text=msg, disable_web_page_preview=True)
+            await bot.send_message(chat_id=get_chat_id(), text=msg, parse_mode="HTML", disable_web_page_preview=True)
             await asyncio.sleep(0.4)
         except TelegramError as e:
             print(f"  ✗ Error sending new user alert: {e}")
