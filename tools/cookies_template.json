@@ -1,0 +1,22 @@
+[
+  {
+    "username": "account1",
+    "cookies": {
+      "auth_token": "PASTE_AUTH_TOKEN_HERE"
+    },
+    "proxy": "http://user1:pass1@proxy-host1:port1"
+  },
+  {
+    "username": "account2",
+    "cookies": {
+      "auth_token": "PASTE_AUTH_TOKEN_HERE"
+    },
+    "proxy": "http://user2:pass2@proxy-host2:port2"
+  },
+  {
+    "username": "account3",
+    "cookies": {
+      "auth_token": "PASTE_AUTH_TOKEN_HERE"
+    }
+  }
+]
