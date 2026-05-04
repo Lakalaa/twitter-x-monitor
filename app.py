@@ -99,7 +99,26 @@ async def run_all_checks(triggered_by: str = "schedule"):
         await tb.send_message(msg)
         return
 
-    for username in config.get("track_followers_of", []):
+    track_followers = config.get("track_followers_of", [])
+    track_following = config.get("track_following_of", [])
+
+    # Accounts tracked for BOTH followers and following → run full analysis
+    both = [u for u in track_followers if u in track_following]
+    followers_only_track = [u for u in track_followers if u not in both]
+    following_only_track = [u for u in track_following if u not in both]
+
+    for username in both:
+        add_log(f"Fetching followers + following of @{username} for analysis…")
+        try:
+            followers = s.get_followers([username], limit=None, save=True, resume=False)
+            following = s.get_following([username], limit=None, save=True, resume=False)
+            add_log(f"@{username}: {len(followers)} followers, {len(following)} following — running comparison")
+            await tb.send_connection_analysis(username, followers, following)
+        except Exception as e:
+            add_log(f"Error analysis @{username}: {e}")
+            await tb.send_message(f"❌ Error running analysis for @{username}: {e}")
+
+    for username in followers_only_track:
         add_log(f"Fetching followers of @{username}...")
         try:
             users = s.get_followers([username], limit=None, save=True, resume=False)
@@ -109,7 +128,7 @@ async def run_all_checks(triggered_by: str = "schedule"):
             add_log(f"Error followers @{username}: {e}")
             await tb.send_message(f"❌ Error fetching followers @{username}: {e}")
 
-    for username in config.get("track_following_of", []):
+    for username in following_only_track:
         add_log(f"Fetching following of @{username}...")
         try:
             users = s.get_following([username], limit=None, save=True, resume=False)
@@ -230,13 +249,18 @@ async def handle_telegram_commands():
                     await bot.send_message(chat_id=chat_id, text=(
                         "📖 Commands:\n\n"
                         "/check — run all scheduled checks immediately\n"
-                        "/followers elonmusk — get followers of @elonmusk\n"
-                        "/following OpenAI — get following list of @OpenAI\n"
-                        "/complaints your brand — search complaint tweets (last 7 days)\n"
-                        "/status — show tracked accounts + last/next check times\n"
+                        "/followers username — get follower list of an account\n"
+                        "/following username — get following list of an account\n"
+                        "/compare username — full comparison:\n"
+                        "  🤝 Mutuals | 👁 Followers-only | 📤 Following-only\n"
+                        "/complaints topic — search complaint tweets (last 7 days)\n"
+                        "/status — tracked accounts + last/next check times\n"
                         "/help — show this message\n\n"
+                        "💡 Tip: add the same account to both 'Track followers of'\n"
+                        "and 'Track following of' in the dashboard — scheduled\n"
+                        "checks will automatically run the full /compare analysis.\n\n"
                         "Works in this chat and in the group.\n"
-                        "In the group you can type /check or /check@" + bot_info.username
+                        "In the group: /compare@" + bot_info.username + " username"
                     ), disable_web_page_preview=True)
 
                 # ── /status ─────────────────────────────────────────────────
@@ -306,6 +330,40 @@ async def handle_telegram_commands():
                             except Exception as e:
                                 asyncio.run(tb.send_message(f"❌ Error fetching following of @{u}: {e}"))
                         threading.Thread(target=_run_following, daemon=True).start()
+
+                # ── /compare <username> ─────────────────────────────────────
+                elif cmd == "/compare":
+                    if not args:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /compare username\n"
+                            "Example: /compare elonmusk\n\n"
+                            "Fetches BOTH followers and following, then shows:\n"
+                            "🤝 Mutuals — follow each other\n"
+                            "👁 Followers only — fans (not followed back)\n"
+                            "📤 Following only — they don't follow back"
+                        ))
+                    else:
+                        uname = args.lstrip("@").split()[0]
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"▶️ Fetching followers + following of @{uname} for comparison… results will appear in the group.",
+                            disable_web_page_preview=True
+                        )
+                        def _run_compare(u=uname):
+                            s = get_scraper()
+                            if not s:
+                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
+                                return
+                            try:
+                                add_log(f"Compare: fetching followers of @{u}…")
+                                followers = s.get_followers([u], limit=500, save=True)
+                                add_log(f"Compare: fetching following of @{u}…")
+                                following = s.get_following([u], limit=500, save=True)
+                                add_log(f"Compare @{u}: {len(followers)} flw / {len(following)} fwing")
+                                asyncio.run(tb.send_connection_analysis(u, followers, following))
+                            except Exception as e:
+                                asyncio.run(tb.send_message(f"❌ Error comparing @{u}: {e}"))
+                        threading.Thread(target=_run_compare, daemon=True).start()
 
                 # ── /complaints <query> ──────────────────────────────────────
                 elif cmd == "/complaints":
