@@ -270,7 +270,8 @@ async def handle_telegram_commands():
                     following_list = config.get("track_following_of", [])
                     complaints_list = [c["query"] for c in config.get("monitor_complaints", [])]
                     interval = config.get("check_interval_minutes", 60)
-                    has_token = bool(config.get("twitter_auth_token") and config["twitter_auth_token"] != "YOUR_AUTH_TOKEN_HERE")
+                    _tok = os.environ.get("TWITTER_AUTH_TOKEN", "") or config.get("twitter_auth_token", "")
+                    has_token = bool(_tok and _tok not in ("", "YOUR_AUTH_TOKEN_HERE"))
                     reply = (
                         f"📊 Monitor Status\n\n"
                         f"Twitter token: {'✅ set' if has_token else '❌ missing'}\n"
@@ -519,7 +520,8 @@ def api_save_token():
 @app.route("/api/status")
 def api_status():
     config = load_config()
-    has_token = bool(config.get("twitter_auth_token") and config["twitter_auth_token"] != "YOUR_AUTH_TOKEN_HERE")
+    token = os.environ.get("TWITTER_AUTH_TOKEN", "") or config.get("twitter_auth_token", "")
+    has_token = bool(token and token not in ("", "YOUR_AUTH_TOKEN_HERE"))
     return jsonify({
         "running": STATE["running"],
         "last_check": STATE["last_check"],
