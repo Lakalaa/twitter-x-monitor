@@ -13,6 +13,3 @@ fake-useragent==2.2.0
 pyotp==2.9.0
 websockets==16.0
 twscrape==0.17.0
-tweeterpy==2.0.15
-twitter-api-client==0.10.22
-Scweet==5.3
