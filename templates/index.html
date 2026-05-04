@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Twitter/X Monitor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; min-height: 100vh; }
+  header { background: #1a1d27; border-bottom: 1px solid #2a2d3a; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 20px; font-weight: 700; color: #fff; }
+  header .bird { font-size: 24px; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; margin-left: auto; }
+  .status-dot.on { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+  .status-dot.off { background: #6b7280; }
+  .status-label { font-size: 13px; color: #9ca3af; }
+
+  .tabs { display: flex; gap: 2px; padding: 16px 24px 0; border-bottom: 1px solid #2a2d3a; background: #1a1d27; }
+  .tab { padding: 10px 20px; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500; color: #9ca3af; border: 1px solid transparent; border-bottom: none; transition: all .15s; }
+  .tab:hover { color: #e0e0e0; background: #252836; }
+  .tab.active { color: #fff; background: #0f1117; border-color: #2a2d3a; }
+
+  .content { padding: 24px; max-width: 900px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .card { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 16px; }
+
+  .stat-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .stat { background: #252836; border-radius: 8px; padding: 14px 18px; flex: 1; min-width: 140px; }
+  .stat .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .stat .value { font-size: 18px; font-weight: 700; color: #fff; }
+  .stat .value.green { color: #22c55e; }
+  .stat .value.yellow { color: #f59e0b; }
+  .stat .value.red { color: #ef4444; }
+
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 8px; font-size: 14px; font-weight: 500; border: none; cursor: pointer; transition: all .15s; }
+  .btn-primary { background: #3b82f6; color: #fff; }
+  .btn-primary:hover { background: #2563eb; }
+  .btn-success { background: #22c55e; color: #fff; }
+  .btn-success:hover { background: #16a34a; }
+  .btn-danger { background: #ef4444; color: #fff; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-ghost { background: #252836; color: #e0e0e0; border: 1px solid #2a2d3a; }
+  .btn-ghost:hover { background: #2d3148; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+
+  label { display: block; font-size: 13px; color: #9ca3af; margin-bottom: 6px; margin-top: 14px; }
+  input[type=text], input[type=password], input[type=number], textarea {
+    width: 100%; padding: 10px 12px; background: #252836; border: 1px solid #2a2d3a;
+    border-radius: 8px; color: #e0e0e0; font-size: 14px; outline: none; transition: border .15s;
+  }
+  input:focus, textarea:focus { border-color: #3b82f6; }
+  textarea { min-height: 80px; resize: vertical; font-family: monospace; }
+
+  .tag-input-wrapper { display: flex; gap: 8px; margin-top: 6px; }
+  .tag-input-wrapper input { flex: 1; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tag { background: #252836; border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 10px; border-radius: 20px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .tag .remove { cursor: pointer; color: #6b7280; font-size: 16px; line-height: 1; }
+  .tag .remove:hover { color: #ef4444; }
+
+  .complaint-row { background: #252836; border-radius: 8px; padding: 12px 14px; margin-top: 8px; display: flex; align-items: center; gap: 10px; }
+  .complaint-row input { flex: 1; margin: 0; }
+  .complaint-row .days { width: 80px; }
+
+  .log-box { background: #0a0c12; border: 1px solid #2a2d3a; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; color: #6ee7b7; max-height: 320px; overflow-y: auto; }
+  .log-box .entry { padding: 2px 0; border-bottom: 1px solid #1a1d27; }
+  .log-box .entry:last-child { border-bottom: none; }
+
+  .commands-box { background: #0a0c12; border: 1px solid #2a2d3a; border-radius: 8px; padding: 16px; }
+  .cmd { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid #1a1d27; }
+  .cmd:last-child { border-bottom: none; }
+  .cmd code { background: #1a2a3a; color: #60a5fa; padding: 3px 8px; border-radius: 5px; font-size: 13px; white-space: nowrap; }
+  .cmd .desc { font-size: 13px; color: #9ca3af; }
+
+  .alert { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
+  .alert-success { background: #14532d; color: #86efac; border: 1px solid #166534; }
+  .alert-error { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+  .alert-info { background: #1e3a5f; color: #93c5fd; border: 1px solid #1d4ed8; }
+  #save-alert { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="bird">🐦</span>
+  <h1>Twitter/X Monitor</h1>
+  <span class="status-label" id="status-label">Loading...</span>
+  <span class="status-dot off" id="status-dot"></span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('dashboard')">Dashboard</div>
+  <div class="tab" onclick="showTab('targets')">Targets</div>
+  <div class="tab" onclick="showTab('settings')">Settings</div>
+  <div class="tab" onclick="showTab('commands')">Bot Commands</div>
+</div>
+
+<div class="content">
+
+  <!-- DASHBOARD -->
+  <div class="panel active" id="tab-dashboard">
+    <div class="stat-row">
+      <div class="stat">
+        <div class="label">Monitor Status</div>
+        <div class="value" id="stat-running">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Last Check</div>
+        <div class="value" id="stat-last" style="font-size:14px">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Next Check</div>
+        <div class="value" id="stat-next" style="font-size:14px">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Twitter Token</div>
+        <div class="value" id="stat-token">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Controls</h2>
+      <div class="btn-row">
+        <button class="btn btn-success" onclick="startMonitor()">▶ Start Monitor</button>
+        <button class="btn btn-danger" onclick="stopMonitor()">■ Stop Monitor</button>
+        <button class="btn btn-primary" onclick="checkNow()">⚡ Check Now</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Activity Log</h2>
+      <div class="log-box" id="log-box">
+        <div class="entry" style="color:#6b7280">Waiting for activity...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TARGETS -->
+  <div class="panel" id="tab-targets">
+    <div id="save-alert" class="alert alert-success">✅ Saved successfully</div>
+
+    <div class="card">
+      <h2>Track Followers Of</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px">Get full follower lists + new follower alerts for these accounts</p>
+      <div class="tag-input-wrapper">
+        <input type="text" id="followers-input" placeholder="username (without @)" onkeydown="if(event.key==='Enter')addTag('followers')">
+        <button class="btn btn-ghost" onclick="addTag('followers')">Add</button>
+      </div>
+      <div class="tags" id="followers-tags"></div>
+    </div>
+
+    <div class="card">
+      <h2>Track Following Of</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px">Get full following lists for these accounts</p>
+      <div class="tag-input-wrapper">
+        <input type="text" id="following-input" placeholder="username (without @)" onkeydown="if(event.key==='Enter')addTag('following')">
+        <button class="btn btn-ghost" onclick="addTag('following')">Add</button>
+      </div>
+      <div class="tags" id="following-tags"></div>
+    </div>
+
+    <div class="card">
+      <h2>Monitor Complaints</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px">Search for complaint tweets about these topics</p>
+      <div id="complaints-list"></div>
+      <button class="btn btn-ghost" style="margin-top:10px" onclick="addComplaint()">+ Add Topic</button>
+    </div>
+
+    <div class="card">
+      <h2>Check Interval</h2>
+      <label>How often to run checks (minutes)</label>
+      <input type="number" id="interval" value="60" min="10" max="1440" style="max-width:120px">
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveTargets()">💾 Save Targets</button>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div class="panel" id="tab-settings">
+    <div id="secrets-alert" style="display:none;margin-bottom:12px"></div>
+
+    <!-- Status badges -->
+    <div class="stat-row" id="secrets-status-row">
+      <div class="stat">
+        <div class="label">Twitter Token</div>
+        <div class="value" id="ss-twitter">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Telegram Bot Token</div>
+        <div class="value" id="ss-tg-token">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Telegram Chat ID</div>
+        <div class="value" id="ss-chat-id">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Twitter Auth Token</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:4px">
+        Log into <strong>x.com</strong> in your browser → press <strong>F12</strong> → Application tab → Cookies → <code style="background:#0a0c12;padding:2px 6px;border-radius:4px;color:#60a5fa">https://x.com</code> → find <code style="background:#0a0c12;padding:2px 6px;border-radius:4px;color:#60a5fa">auth_token</code> and copy its value.
+      </p>
+      <label>auth_token value</label>
+      <input type="password" id="twitter-token" placeholder="Paste Twitter auth_token here">
+    </div>
+
+    <div class="card">
+      <h2>Telegram Bot Token</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:4px">
+        Get this from <strong>@BotFather</strong> on Telegram → /mybots → choose your bot → API Token.
+      </p>
+      <label>Bot token (from @BotFather)</label>
+      <input type="password" id="telegram-token" placeholder="123456789:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+    </div>
+
+    <div class="card">
+      <h2>Telegram Group Chat ID</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:4px">
+        The ID of the group where results are sent. Negative number for groups, e.g. <code style="background:#0a0c12;padding:2px 6px;border-radius:4px;color:#60a5fa">-1003707579699</code>.<br>
+        To find it: add <strong>@userinfobot</strong> to your group and it will tell you the chat ID.
+      </p>
+      <label>Chat ID (include the minus sign for groups)</label>
+      <input type="text" id="telegram-chat-id" placeholder="-1001234567890">
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveAllSecrets()">💾 Save All Credentials</button>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Multiple Twitter Accounts (Advanced)</h2>
+      <p style="font-size:13px;color:#6b7280">
+        For faster scraping, add multiple Twitter accounts to <code style="background:#0a0c12;padding:2px 6px;border-radius:4px;color:#60a5fa">tools/cookies.json</code>. More accounts = faster results.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Render / Production Deployment</h2>
+      <p style="font-size:13px;color:#9ca3af;line-height:1.8">
+        When deploying to Render, set these as <strong style="color:#fff">Environment Variables</strong> in your Render service dashboard instead of using this form:<br><br>
+        <code style="background:#0a0c12;padding:2px 8px;border-radius:4px;color:#60a5fa">TELEGRAM_BOT_TOKEN</code> — your bot token<br>
+        <code style="background:#0a0c12;padding:2px 8px;border-radius:4px;color:#60a5fa">TELEGRAM_CHAT_ID</code> — your group chat ID (e.g. -1003707579699)<br>
+        <code style="background:#0a0c12;padding:2px 8px;border-radius:4px;color:#60a5fa">TWITTER_AUTH_TOKEN</code> — your Twitter auth_token<br><br>
+        Render keeps them encrypted and they survive every redeploy automatically.
+      </p>
+    </div>
+  </div>
+
+  <!-- BOT COMMANDS -->
+  <div class="panel" id="tab-commands">
+    <div class="card">
+      <h2>Telegram Bot Commands</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:16px">
+        Send these commands to your bot (<strong>@BloomEthereumn_bot</strong>) in any chat or the group:
+      </p>
+      <div class="commands-box">
+        <div class="cmd"><code>/start</code><div class="desc">Show welcome message and all available commands</div></div>
+        <div class="cmd"><code>/check</code><div class="desc">Run all checks from Targets immediately — sends results to the group</div></div>
+        <div class="cmd"><code>/followers elonmusk</code><div class="desc">Get followers of any account right now (limit 500)</div></div>
+        <div class="cmd"><code>/following OpenAI</code><div class="desc">Get following list of any account right now (limit 500)</div></div>
+        <div class="cmd"><code>/complaints your brand</code><div class="desc">Search complaint tweets about any topic (last 7 days)</div></div>
+        <div class="cmd"><code>/status</code><div class="desc">Show which accounts are tracked + last/next check times</div></div>
+        <div class="cmd"><code>/help</code><div class="desc">Show all commands</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>How Results Look in Telegram</h2>
+      <div style="font-size:13px;color:#9ca3af;line-height:1.7">
+        <p><strong style="color:#fff">Followers/Following list</strong> — sent in batches of 20. Each user shows their username, display name, follower count, verified badge, and profile link (https://x.com/username)</p>
+        <br>
+        <p><strong style="color:#fff">New follower alerts</strong> — sent immediately at the top when someone new appears since the last check. Shows their full profile info.</p>
+        <br>
+        <p><strong style="color:#fff">Complaint tweets</strong> — one message per complaint tweet. Shows username + profile link, tweet text, likes/retweets/replies, and tweet link.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const tags = { followers: [], following: [] };
+const complaints = [];
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['dashboard','targets','settings','commands'][i] === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'targets') loadTargets();
+  if (name === 'settings') loadSecretsStatus();
+}
+
+// ── Status polling ────────────────────────────────────────────────────────────
+async function refreshStatus() {
+  const r = await fetch('/api/status').then(r => r.json());
+  const dot = document.getElementById('status-dot');
+  const label = document.getElementById('status-label');
+  const running = r.running;
+  dot.className = 'status-dot ' + (running ? 'on' : 'off');
+  label.textContent = running ? 'Running' : 'Stopped';
+  document.getElementById('stat-running').textContent = running ? '🟢 Running' : '🔴 Stopped';
+  document.getElementById('stat-running').className = 'value ' + (running ? 'green' : 'red');
+  document.getElementById('stat-last').textContent = r.last_check || 'Never';
+  document.getElementById('stat-next').textContent = r.next_check || '—';
+  document.getElementById('stat-token').textContent = r.has_token ? '✅ Set' : '❌ Missing';
+  document.getElementById('stat-token').className = 'value ' + (r.has_token ? 'green' : 'red');
+
+  if (r.logs && r.logs.length) {
+    const box = document.getElementById('log-box');
+    box.innerHTML = r.logs.map(l => `<div class="entry">${l}</div>`).join('');
+  }
+}
+setInterval(refreshStatus, 4000);
+refreshStatus();
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+async function startMonitor() {
+  await fetch('/api/start', { method: 'POST' });
+  refreshStatus();
+}
+async function stopMonitor() {
+  await fetch('/api/stop', { method: 'POST' });
+  refreshStatus();
+}
+async function checkNow() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ Running...';
+  await fetch('/api/check', { method: 'POST' });
+  setTimeout(() => { btn.disabled = false; btn.textContent = '⚡ Check Now'; }, 3000);
+}
+
+// ── Tags ──────────────────────────────────────────────────────────────────────
+function addTag(type) {
+  const input = document.getElementById(type + '-input');
+  const val = input.value.trim().replace(/^@/, '');
+  if (!val || tags[type].includes(val)) { input.value = ''; return; }
+  tags[type].push(val);
+  renderTags(type);
+  input.value = '';
+}
+function removeTag(type, val) {
+  tags[type] = tags[type].filter(t => t !== val);
+  renderTags(type);
+}
+function renderTags(type) {
+  document.getElementById(type + '-tags').innerHTML = tags[type].map(t =>
+    `<span class="tag">@${t}<span class="remove" onclick="removeTag('${type}','${t}')">×</span></span>`
+  ).join('');
+}
+
+// ── Complaints ────────────────────────────────────────────────────────────────
+function addComplaint(query='', days=7) {
+  const id = Date.now();
+  complaints.push({ id, query, days });
+  renderComplaints();
+}
+function removeComplaint(id) {
+  const i = complaints.findIndex(c => c.id === id);
+  if (i >= 0) complaints.splice(i, 1);
+  renderComplaints();
+}
+function renderComplaints() {
+  document.getElementById('complaints-list').innerHTML = complaints.map(c =>
+    `<div class="complaint-row">
+      <input type="text" placeholder="keyword, brand, or hashtag" value="${c.query}"
+        oninput="complaints.find(x=>x.id===${c.id}).query=this.value">
+      <input type="number" class="days" value="${c.days}" min="1" max="90"
+        oninput="complaints.find(x=>x.id===${c.id}).days=+this.value">
+      <span style="font-size:12px;color:#6b7280">days</span>
+      <button class="btn btn-ghost" style="padding:6px 10px" onclick="removeComplaint(${c.id})">✕</button>
+    </div>`
+  ).join('');
+}
+
+// ── Load / Save targets ───────────────────────────────────────────────────────
+async function loadTargets() {
+  const cfg = await fetch('/api/config').then(r => r.json());
+  tags.followers = cfg.track_followers_of || [];
+  tags.following = cfg.track_following_of || [];
+  renderTags('followers');
+  renderTags('following');
+  complaints.length = 0;
+  (cfg.monitor_complaints || []).forEach(c => complaints.push({ id: Date.now() + Math.random(), query: c.query, days: c.since_days_ago }));
+  renderComplaints();
+  document.getElementById('interval').value = cfg.check_interval_minutes || 60;
+}
+async function saveTargets() {
+  const payload = {
+    track_followers_of: tags.followers,
+    track_following_of: tags.following,
+    monitor_complaints: complaints.map(c => ({ query: c.query, since_days_ago: c.days })),
+    check_interval_minutes: parseInt(document.getElementById('interval').value) || 60,
+  };
+  await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  const alert = document.getElementById('save-alert');
+  alert.style.display = 'block';
+  setTimeout(() => alert.style.display = 'none', 3000);
+}
+
+// ── Secrets status ────────────────────────────────────────────────────────────
+async function loadSecretsStatus() {
+  const s = await fetch('/api/secrets').then(r => r.json());
+  const set = (id, ok, extra) => {
+    const el = document.getElementById(id);
+    el.textContent = ok ? ('✅ Set' + (extra ? ' (' + extra + ')' : '')) : '❌ Missing';
+    el.className = 'value ' + (ok ? 'green' : 'red');
+  };
+  set('ss-twitter', s.has_twitter_token);
+  set('ss-tg-token', s.has_telegram_token);
+  set('ss-chat-id', s.has_chat_id, s.telegram_chat_id_preview);
+}
+
+// ── Save all credentials ──────────────────────────────────────────────────────
+async function saveAllSecrets() {
+  const twitterToken = document.getElementById('twitter-token').value.trim();
+  const telegramToken = document.getElementById('telegram-token').value.trim();
+  const chatId = document.getElementById('telegram-chat-id').value.trim();
+
+  if (!twitterToken && !telegramToken && !chatId) {
+    const el = document.getElementById('secrets-alert');
+    el.className = 'alert alert-error';
+    el.textContent = '⚠️ Fill in at least one field to save.';
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 3000);
+    return;
+  }
+
+  const res = await fetch('/api/secrets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ twitter_token: twitterToken, telegram_token: telegramToken, telegram_chat_id: chatId })
+  }).then(r => r.json());
+
+  document.getElementById('twitter-token').value = '';
+  document.getElementById('telegram-token').value = '';
+  document.getElementById('telegram-chat-id').value = '';
+
+  const el = document.getElementById('secrets-alert');
+  if (res.ok) {
+    el.className = 'alert alert-success';
+    el.textContent = '✅ Saved: ' + (res.saved.join(', ') || 'nothing changed');
+  } else {
+    el.className = 'alert alert-error';
+    el.textContent = '❌ Save failed';
+  }
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 4000);
+  loadSecretsStatus();
+  refreshStatus();
+}
+</script>
+</body>
+</html>
