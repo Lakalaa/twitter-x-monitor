@@ -62,6 +62,7 @@ def profile_link(username: str) -> str:
 # ─── Snapshot helpers for new-follower detection ──────────────────────────────
 
 def load_snapshot(target_account: str, list_type: str) -> set:
+    """Load previously saved follower/following usernames from disk."""
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
     path = f"{SNAPSHOT_DIR}/{target_account}_{list_type}.json"
     if os.path.exists(path):
@@ -71,6 +72,7 @@ def load_snapshot(target_account: str, list_type: str) -> set:
 
 
 def save_snapshot(target_account: str, list_type: str, usernames: set):
+    """Save current follower/following usernames to disk."""
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
     path = f"{SNAPSHOT_DIR}/{target_account}_{list_type}.json"
     with open(path, "w") as f:
@@ -78,6 +80,11 @@ def save_snapshot(target_account: str, list_type: str, usernames: set):
 
 
 def find_new_users(current_users: list, target_account: str, list_type: str) -> list:
+    """
+    Compare current list against last saved snapshot.
+    Returns list of user dicts that are NEW since the last run.
+    Also saves the new snapshot for next time.
+    """
     current_usernames = {u.get("username", "") for u in current_users}
     previous_usernames = load_snapshot(target_account, list_type)
     if not previous_usernames:
@@ -102,23 +109,26 @@ async def send_message(text: str):
 
 
 async def send_header(title: str, subtitle: str = ""):
-    msg = f"{'='*40}
-🐦 {title}"
+    msg = f"{'='*40}\n🐦 {title}"
     if subtitle:
-        msg += f"
-{subtitle}"
-    msg += f"
-{'='*40}"
+        msg += f"\n{subtitle}"
+    msg += f"\n{'='*40}"
     await send_message(msg)
 
 
 # ─── Follower / Following differentiation ────────────────────────────────────
 
 def differentiate_connections(followers: list, following: list) -> dict:
-    follower_names  = {u.get("username", "").lower() for u in followers}
-    following_names = {u.get("username", "").lower() for u in following}
-    mutual_names        = follower_names & following_names
-    follower_only_names = follower_names - following_names
+    """
+    Split two user lists into three exclusive categories:
+      mutuals        — appear in both lists (follow each other)
+      followers_only — follow the target but target does NOT follow back
+      following_only — target follows them but they do NOT follow back
+    """
+    follower_names   = {u.get("username", "").lower() for u in followers}
+    following_names  = {u.get("username", "").lower() for u in following}
+    mutual_names         = follower_names & following_names
+    follower_only_names  = follower_names - following_names
     following_only_names = following_names - follower_names
     follower_index  = {u.get("username", "").lower(): u for u in followers}
     following_index = {u.get("username", "").lower(): u for u in following}
@@ -130,7 +140,7 @@ def differentiate_connections(followers: list, following: list) -> dict:
 
 
 def _format_user_line_html(u: dict, icon: str = "•") -> str:
-    """Return one HTML-formatted line with a clickable profile link."""
+    """Return one HTML-formatted line; username is a clickable hyperlink."""
     username  = u.get("username", "unknown")
     name      = u.get("name", "")
     followers = u.get("followers_count", 0) or 0
@@ -149,24 +159,22 @@ def _format_user_line_html(u: dict, icon: str = "•") -> str:
 def _build_html_batches(header: str, lines: list, max_len: int = MAX_MSG_LEN) -> list:
     """
     Safely split a list of HTML lines into messages that never exceed max_len.
-    Adds lines one-by-one so we never truncate in the middle of an <a> tag.
+    Adds lines one-by-one so we never truncate inside an <a> tag.
     """
     messages = []
     current = [header]
     current_len = len(header)
     for line in lines:
-        needed = len(line) + 1  # +1 for newline
+        needed = len(line) + 1  # +1 for the joining newline
         if current_len + needed > max_len:
-            messages.append("
-".join(current))
+            messages.append("\n".join(current))
             current = [line]
             current_len = len(line)
         else:
             current.append(line)
             current_len += needed
     if current:
-        messages.append("
-".join(current))
+        messages.append("\n".join(current))
     return messages
 
 
@@ -178,16 +186,14 @@ async def _send_user_list_batched(
     chat_id = get_chat_id()
     total   = len(users)
 
-    await send_message(f"{'─'*38}
-{icon} {header_title}
-{'─'*38}")
+    await send_message(f"{'─'*38}\n{icon} {header_title}\n{'─'*38}")
 
     for i in range(0, total, batch_size):
         batch  = users[i : i + batch_size]
         header = f"{icon} {i+1}–{min(i+batch_size, total)} of {total:,}"
         lines  = [_format_user_line_html(u, "•") for u in batch]
 
-        # Build sub-messages that are safe to send (no mid-tag truncation)
+        # Build sub-messages that never cut inside an HTML tag
         sub_msgs = _build_html_batches(header, lines)
         for msg in sub_msgs:
             try:
@@ -202,51 +208,50 @@ async def _send_user_list_batched(
 
 
 async def send_connection_analysis(username: str, followers: list, following: list):
+    """
+    Fetch-compare-send: computes mutuals / followers-only / following-only
+    and sends them as clearly labelled sections to Telegram.
+    """
     diff           = differentiate_connections(followers, following)
     mutuals        = diff["mutuals"]
     followers_only = diff["followers_only"]
     following_only = diff["following_only"]
 
     summary = (
-        f"{'='*40}
-"
-        f"📊 CONNECTION ANALYSIS: @{username}
-"
-        f"{'='*40}
-"
-        f"👥 Followers total  : {len(followers):,}
-"
-        f"➡️  Following total  : {len(following):,}
-"
-        f"{'─'*40}
-"
-        f"🤝 Mutuals          : {len(mutuals):,}  (follow each other)
-"
-        f"👁  Followers only   : {len(followers_only):,}  (fan — not followed back)
-"
-        f"📤 Following only   : {len(following_only):,}  (they don't follow back)
-"
-        f"{'='*40}
-"
+        f"{'='*40}\n"
+        f"📊 CONNECTION ANALYSIS: @{username}\n"
+        f"{'='*40}\n"
+        f"👥 Followers total  : {len(followers):,}\n"
+        f"➡️  Following total  : {len(following):,}\n"
+        f"{'─'*40}\n"
+        f"🤝 Mutuals          : {len(mutuals):,}  (follow each other)\n"
+        f"👁  Followers only   : {len(followers_only):,}  (fan — not followed back)\n"
+        f"📤 Following only   : {len(following_only):,}  (they don't follow back)\n"
+        f"{'='*40}\n"
         f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
     await send_message(summary)
 
     if mutuals:
-        await _send_user_list_batched(mutuals, f"MUTUALS ({len(mutuals):,}) — @{username}", "🤝")
+        await _send_user_list_batched(
+            mutuals, f"MUTUALS ({len(mutuals):,}) — @{username}", "🤝"
+        )
         await send_message(f"✅ Mutuals done — {len(mutuals):,} accounts")
 
     if followers_only:
-        await _send_user_list_batched(followers_only, f"FOLLOWERS ONLY ({len(followers_only):,}) — @{username}", "👁")
+        await _send_user_list_batched(
+            followers_only, f"FOLLOWERS ONLY ({len(followers_only):,}) — @{username}", "👁"
+        )
         await send_message(f"✅ Followers-only done — {len(followers_only):,} accounts")
 
     if following_only:
-        await _send_user_list_batched(following_only, f"FOLLOWING ONLY ({len(following_only):,}) — @{username}", "📤")
+        await _send_user_list_batched(
+            following_only, f"FOLLOWING ONLY ({len(following_only):,}) — @{username}", "📤"
+        )
         await send_message(f"✅ Following-only done — {len(following_only):,} accounts")
 
     await send_message(
-        f"🏁 Analysis complete for @{username}
-"
+        f"🏁 Analysis complete for @{username}\n"
         f"🤝 {len(mutuals):,} mutuals | 👁 {len(followers_only):,} fans | 📤 {len(following_only):,} one-sided"
     )
 
@@ -256,15 +261,20 @@ async def send_connection_analysis(username: str, followers: list, following: li
 async def send_users_to_telegram(
     users: list, list_type: str, target_account: str, batch_size: int = 20
 ):
-    """Send full follower or following list to Telegram safely (no mid-tag truncation)."""
+    """
+    Send full follower or following list to Telegram in safe HTML batches.
+    Also detects and separately announces NEW users since the last run.
+    """
     bot     = get_bot()
     chat_id = get_chat_id()
     total   = len(users)
 
+    # ── Detect new users first ────────────────────────────────────────────────
     new_users = find_new_users(users, target_account, list_type)
     if new_users:
         await send_new_users_alert(new_users, list_type, target_account)
 
+    # ── Send full list in batches ─────────────────────────────────────────────
     await send_header(
         f"{list_type.upper()} LIST: @{target_account}",
         f"Total: {total:,} accounts | {datetime.now().strftime('%Y-%m-%d %H:%M')}"
@@ -296,12 +306,14 @@ async def send_users_to_telegram(
 # ─── New user alert ───────────────────────────────────────────────────────────
 
 async def send_new_users_alert(new_users: list, list_type: str, target_account: str):
+    """
+    Send an alert showing users who newly joined the followers/following list
+    since the last time the script was run.
+    """
     count = len(new_users)
     await send_message(
-        f"🆕 NEW {list_type.upper()} ALERT — @{target_account}
-"
-        f"{count} new {'follower' if count == 1 else 'followers'} since last check!
-"
+        f"🆕 NEW {list_type.upper()} ALERT — @{target_account}\n"
+        f"{count} new {'follower' if count == 1 else 'followers'} since last check!\n"
         f"{'='*40}"
     )
 
@@ -317,21 +329,14 @@ async def send_new_users_alert(new_users: list, list_type: str, target_account: 
         link      = profile_link(username)
 
         msg = (
-            f"🆕 New {list_type[:-1] if list_type.endswith('s') else list_type}!
-
-"
+            f"🆕 New {list_type[:-1] if list_type.endswith('s') else list_type}!\n\n"
             f'👤 <a href="{link}">@{html_mod.escape(username)}</a> {verified}{protected}'
-            + (f"
-Name: {html_mod.escape(name)}" if name and name.lower() != username.lower() else "")
-            + f"
-Followers: {followers:,} | Following: {following:,}"
-            + (f"
-Bio: {html_mod.escape(bio[:150])}" if bio else "")
-            + (f"
-Joined X: {html_mod.escape(created)}" if created else "")
+            + (f"\nName: {html_mod.escape(name)}" if name and name.lower() != username.lower() else "")
+            + f"\nFollowers: {followers:,} | Following: {following:,}"
+            + (f"\nBio: {html_mod.escape(bio[:150])}" if bio else "")
+            + (f"\nJoined X: {html_mod.escape(created)}" if created else "")
         )
 
-        # This message is always short (single user), no truncation needed
         try:
             bot = get_bot()
             await bot.send_message(
@@ -346,6 +351,10 @@ Joined X: {html_mod.escape(created)}" if created else "")
 # ─── Send tweets (complaints / issues) ────────────────────────────────────────
 
 async def send_complaints_to_telegram(tweets: list, search_query: str, complaints_only: bool = True):
+    """
+    Send tweets filtered for complaints/issues to Telegram.
+    Each tweet shows username + profile link, text, engagement stats, and tweet link.
+    """
     bot     = get_bot()
     chat_id = get_chat_id()
 
@@ -358,7 +367,7 @@ async def send_complaints_to_telegram(tweets: list, search_query: str, complaint
 
     total = len(filtered)
     await send_header(
-        f"{label}: "{search_query}"",
+        f"{label}: \"{search_query}\"",
         f"Found {total:,} | Scanned {len(tweets):,} total | {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
 
@@ -382,21 +391,14 @@ async def send_complaints_to_telegram(tweets: list, search_query: str, complaint
         msg = (
             f"{'🚨' if complaints_only else '🐦'} @{username}"
             + (f" ({name})" if name and name != username else "")
-            + f"
-🔗 {user_link}"
-            + f"
-
-{text}"
-            + f"
-
-❤️ {likes}  🔁 {retweets}  💬 {comments}"
+            + f"\n🔗 {user_link}"
+            + f"\n\n{text}"
+            + f"\n\n❤️ {likes}  🔁 {retweets}  💬 {comments}"
         )
         if tweet_url:
-            msg += f"
-🐦 {tweet_url}"
+            msg += f"\n🐦 {tweet_url}"
         if timestamp:
-            msg += f"
-🕐 {timestamp}"
+            msg += f"\n🕐 {timestamp}"
 
         if len(msg) > MAX_MSG_LEN:
             msg = msg[:MAX_MSG_LEN] + "..."  # plain text — safe to truncate
@@ -409,7 +411,7 @@ async def send_complaints_to_telegram(tweets: list, search_query: str, complaint
             await asyncio.sleep(2)
 
     await send_message(
-        f"✅ Done — {total:,} {'complaints' if complaints_only else 'tweets'} for: "{search_query}""
+        f"✅ Done — {total:,} {'complaints' if complaints_only else 'tweets'} for: \"{search_query}\""
     )
     print(f"Done sending {total} tweets.")
 
@@ -433,16 +435,11 @@ async def send_profile_info(profiles: list, title: str = "USER PROFILES"):
         msg = (
             f"👤 @{username}"
             + (f" | {name}" if name else "")
-            + f"
-{protected} {verified}"
-            + f"
-Followers: {followers:,} | Following: {following:,}"
-            + (f"
-Bio: {bio[:200]}" if bio else "")
-            + (f"
-Joined: {created}" if created else "")
-            + f"
-🔗 {link}"
+            + f"\n{protected} {verified}"
+            + f"\nFollowers: {followers:,} | Following: {following:,}"
+            + (f"\nBio: {bio[:200]}" if bio else "")
+            + (f"\nJoined: {created}" if created else "")
+            + f"\n🔗 {link}"
         )
         try:
             bot = get_bot()
@@ -457,16 +454,13 @@ Joined: {created}" if created else "")
 async def test_connection():
     print("Testing Telegram connection...")
     try:
-        bot = get_bot()
-        me  = await bot.get_me()
+        bot  = get_bot()
+        me   = await bot.get_me()
         print(f"  Bot: @{me.username} ({me.first_name})")
         await send_message(
-            f"✅ Twitter/X Scraper Bot connected!
-"
-            f"Bot: @{me.username}
-"
-            f"Features: followers, following, complaints, new user alerts
-"
+            f"✅ Twitter/X Scraper Bot connected!\n"
+            f"Bot: @{me.username}\n"
+            f"Features: followers, following, complaints, new user alerts\n"
             f"Ready to go."
         )
         print("  Connection OK — test message sent to group.")
