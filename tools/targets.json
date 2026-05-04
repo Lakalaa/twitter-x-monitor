@@ -1,0 +1,25 @@
+{
+  "twitter_auth_token": "YOUR_AUTH_TOKEN_HERE",
+
+  "track_followers_of": [
+    "elonmusk",
+    "OpenAI"
+  ],
+
+  "track_following_of": [
+    "elonmusk"
+  ],
+
+  "monitor_complaints": [
+    {
+      "query": "your brand name",
+      "since_days_ago": 7
+    },
+    {
+      "query": "#yourhashtag",
+      "since_days_ago": 3
+    }
+  ],
+
+  "check_interval_minutes": 60
+}
