@@ -118,6 +118,129 @@ async def send_header(title: str, subtitle: str = ""):
     await send_message(msg)
 
 
+# ─── Follower / Following differentiation ────────────────────────────────────
+
+def differentiate_connections(followers: list, following: list) -> dict:
+    """
+    Split two user lists into three exclusive categories:
+      mutuals        — appear in both lists (follow each other)
+      followers_only — follow the target but target does NOT follow back
+      following_only — target follows them but they do NOT follow back
+    """
+    follower_names = {u.get("username", "").lower() for u in followers}
+    following_names = {u.get("username", "").lower() for u in following}
+
+    mutual_names       = follower_names & following_names
+    follower_only_names = follower_names - following_names
+    following_only_names = following_names - follower_names
+
+    # Build index so we can pull full user dicts
+    follower_index  = {u.get("username","").lower(): u for u in followers}
+    following_index = {u.get("username","").lower(): u for u in following}
+
+    mutuals        = [follower_index[n]  for n in sorted(mutual_names)]
+    followers_only = [follower_index[n]  for n in sorted(follower_only_names)]
+    following_only = [following_index[n] for n in sorted(following_only_names)]
+
+    return {
+        "mutuals":        mutuals,
+        "followers_only": followers_only,
+        "following_only": following_only,
+    }
+
+
+def _format_user_line(u: dict, icon: str = "•") -> str:
+    username  = u.get("username", "unknown")
+    name      = u.get("name", "")
+    followers = u.get("followers_count", 0) or 0
+    verified  = "✓" if u.get("blue_verified") else ""
+    protected = "🔒" if u.get("protected") else ""
+    link      = profile_link(username)
+    line = f"{icon} @{username} {verified}{protected}"
+    if name and name != username:
+        line += f" ({name})"
+    if followers:
+        line += f" — {followers:,} flw"
+    line += f"\n   {link}"
+    return line
+
+
+async def _send_user_list_batched(
+    users: list, header_title: str, icon: str, batch_size: int = 25
+):
+    """Send a list of users to the group in compact batched messages."""
+    bot     = get_bot()
+    chat_id = get_chat_id()
+    total   = len(users)
+
+    await send_message(
+        f"{'─'*38}\n{icon} {header_title}\n{'─'*38}"
+    )
+
+    for i in range(0, total, batch_size):
+        batch = users[i : i + batch_size]
+        lines = [f"{icon} {i+1}–{min(i+batch_size, total)} of {total:,}\n"]
+        lines += [_format_user_line(u, "•") for u in batch]
+        msg = "\n".join(lines)
+        if len(msg) > 4000:
+            msg = msg[:4000] + "\n…(truncated)"
+        try:
+            await bot.send_message(chat_id=chat_id, text=msg, disable_web_page_preview=True)
+            await asyncio.sleep(0.5)
+        except TelegramError as e:
+            print(f"  ✗ Telegram error: {e}")
+            await asyncio.sleep(2)
+
+
+async def send_connection_analysis(username: str, followers: list, following: list):
+    """
+    Fetch-compare-send: computes mutuals / followers-only / following-only
+    and sends them as clearly labelled sections to Telegram.
+    """
+    diff           = differentiate_connections(followers, following)
+    mutuals        = diff["mutuals"]
+    followers_only = diff["followers_only"]
+    following_only = diff["following_only"]
+
+    summary = (
+        f"{'='*40}\n"
+        f"📊 CONNECTION ANALYSIS: @{username}\n"
+        f"{'='*40}\n"
+        f"👥 Followers total  : {len(followers):,}\n"
+        f"➡️  Following total  : {len(following):,}\n"
+        f"{'─'*40}\n"
+        f"🤝 Mutuals          : {len(mutuals):,}  (follow each other)\n"
+        f"👁  Followers only   : {len(followers_only):,}  (fan — not followed back)\n"
+        f"📤 Following only   : {len(following_only):,}  (they don't follow back)\n"
+        f"{'='*40}\n"
+        f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    )
+    await send_message(summary)
+
+    if mutuals:
+        await _send_user_list_batched(
+            mutuals, f"MUTUALS ({len(mutuals):,}) — @{username}", "🤝"
+        )
+        await send_message(f"✅ Mutuals done — {len(mutuals):,} accounts")
+
+    if followers_only:
+        await _send_user_list_batched(
+            followers_only, f"FOLLOWERS ONLY ({len(followers_only):,}) — @{username}", "👁"
+        )
+        await send_message(f"✅ Followers-only done — {len(followers_only):,} accounts")
+
+    if following_only:
+        await _send_user_list_batched(
+            following_only, f"FOLLOWING ONLY ({len(following_only):,}) — @{username}", "📤"
+        )
+        await send_message(f"✅ Following-only done — {len(following_only):,} accounts")
+
+    await send_message(
+        f"🏁 Analysis complete for @{username}\n"
+        f"🤝 {len(mutuals):,} mutuals | 👁 {len(followers_only):,} fans | 📤 {len(following_only):,} one-sided"
+    )
+
+
 # ─── Send followers/following ─────────────────────────────────────────────────
 
 async def send_users_to_telegram(users: list, list_type: str, target_account: str, batch_size: int = 20):
