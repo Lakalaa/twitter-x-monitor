@@ -64,14 +64,22 @@ def add_log(msg: str):
 
 
 def get_scraper():
-    from Scweet import Scweet, ScweetConfig
+    try:
+        from Scweet import Scweet, ScweetConfig
+    except ImportError:
+        add_log("WARNING: Scweet not installed — scraping unavailable")
+        return None
     config = load_config()
+    # Also accept token from environment variable
+    auth_token = (
+        os.environ.get("TWITTER_AUTH_TOKEN", "")
+        or config.get("twitter_auth_token", "")
+    )
     cookies_file = "tools/cookies.json"
-    auth_token = config.get("twitter_auth_token", "")
     scfg = ScweetConfig(concurrency=2, save_dir="outputs", save_format="json", min_delay_s=2.0)
     if os.path.exists(cookies_file):
         return Scweet(cookies_file=cookies_file, config=scfg)
-    elif auth_token and auth_token != "YOUR_AUTH_TOKEN_HERE":
+    elif auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE"):
         return Scweet(auth_token=auth_token, config=scfg)
     return None
 
