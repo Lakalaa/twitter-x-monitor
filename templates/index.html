@@ -202,12 +202,15 @@
     </div>
 
     <div class="card">
-      <h2>Twitter Auth Token</h2>
-      <p style="font-size:13px;color:#6b7280;margin-bottom:4px">
-        Log into <strong>x.com</strong> in your browser → press <strong>F12</strong> → Application tab → Cookies → <code style="background:#0a0c12;padding:2px 6px;border-radius:4px;color:#60a5fa">https://x.com</code> → find <code style="background:#0a0c12;padding:2px 6px;border-radius:4px;color:#60a5fa">auth_token</code> and copy its value.
+      <h2>Twitter Credentials</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px">
+        Log into <strong>x.com</strong> → press <strong>F12</strong> → <strong>Application</strong> tab → <strong>Cookies</strong> → <code style="background:#0a0c12;padding:2px 6px;border-radius:4px;color:#60a5fa">https://x.com</code> → copy both values below.
       </p>
-      <label>auth_token value</label>
-      <input type="password" id="twitter-token" placeholder="Paste Twitter auth_token here">
+      <label>auth_token <span style="color:#6b7280;font-weight:400">(required)</span></label>
+      <input type="password" id="twitter-token" placeholder="Paste auth_token cookie value here" style="margin-bottom:10px">
+      <label>ct0 <span style="color:#6b7280;font-weight:400">(required — CSRF token, also in Cookies)</span></label>
+      <input type="password" id="twitter-ct0" placeholder="Paste ct0 cookie value here">
+      <p style="font-size:12px;color:#ef4444;margin-top:8px">⚠️ Both <strong>auth_token</strong> and <strong>ct0</strong> are required. Without ct0 all results will be 0.</p>
     </div>
 
     <div class="card">
@@ -246,7 +249,8 @@
         When deploying to Render, set these as <strong style="color:#fff">Environment Variables</strong> in your Render service dashboard instead of using this form:<br><br>
         <code style="background:#0a0c12;padding:2px 8px;border-radius:4px;color:#60a5fa">TELEGRAM_BOT_TOKEN</code> — your bot token<br>
         <code style="background:#0a0c12;padding:2px 8px;border-radius:4px;color:#60a5fa">TELEGRAM_CHAT_ID</code> — your group chat ID (e.g. -1003707579699)<br>
-        <code style="background:#0a0c12;padding:2px 8px;border-radius:4px;color:#60a5fa">TWITTER_AUTH_TOKEN</code> — your Twitter auth_token<br><br>
+        <code style="background:#0a0c12;padding:2px 8px;border-radius:4px;color:#60a5fa">TWITTER_AUTH_TOKEN</code> — your Twitter auth_token cookie<br>
+        <code style="background:#0a0c12;padding:2px 8px;border-radius:4px;color:#60a5fa">TWITTER_CT0</code> — your Twitter ct0 cookie (CSRF token — required!)<br><br>
         Render keeps them encrypted and they survive every redeploy automatically.
       </p>
     </div>
@@ -420,10 +424,11 @@ async function loadSecretsStatus() {
 // ── Save all credentials ──────────────────────────────────────────────────────
 async function saveAllSecrets() {
   const twitterToken = document.getElementById('twitter-token').value.trim();
+  const twitterCt0   = document.getElementById('twitter-ct0').value.trim();
   const telegramToken = document.getElementById('telegram-token').value.trim();
   const chatId = document.getElementById('telegram-chat-id').value.trim();
 
-  if (!twitterToken && !telegramToken && !chatId) {
+  if (!twitterToken && !twitterCt0 && !telegramToken && !chatId) {
     const el = document.getElementById('secrets-alert');
     el.className = 'alert alert-error';
     el.textContent = '⚠️ Fill in at least one field to save.';
@@ -435,10 +440,11 @@ async function saveAllSecrets() {
   const res = await fetch('/api/secrets', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ twitter_token: twitterToken, telegram_token: telegramToken, telegram_chat_id: chatId })
+    body: JSON.stringify({ twitter_token: twitterToken, twitter_ct0: twitterCt0, telegram_token: telegramToken, telegram_chat_id: chatId })
   }).then(r => r.json());
 
   document.getElementById('twitter-token').value = '';
+  document.getElementById('twitter-ct0').value   = '';
   document.getElementById('telegram-token').value = '';
   document.getElementById('telegram-chat-id').value = '';
 
