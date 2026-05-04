@@ -70,13 +70,25 @@ def get_scraper():
         add_log("WARNING: Scweet not installed — scraping unavailable")
         return None
     config = load_config()
-    # Also accept token from environment variable
     auth_token = (
         os.environ.get("TWITTER_AUTH_TOKEN", "")
         or config.get("twitter_auth_token", "")
     )
-    cookies_file = "tools/cookies.json"
+    ct0 = (
+        os.environ.get("TWITTER_CT0", "")
+        or config.get("twitter_ct0", "")
+    )
     scfg = ScweetConfig(concurrency=2, save_dir="outputs", save_format="json", min_delay_s=2.0)
+
+    # If both tokens present, write a cookies.json so Scweet has CSRF support
+    if auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE") and ct0:
+        import json as _json
+        cookies_data = [{"username": "primary", "cookies": {"auth_token": auth_token, "ct0": ct0}}]
+        os.makedirs("tools", exist_ok=True)
+        with open("tools/cookies.json", "w") as _f:
+            _json.dump(cookies_data, _f)
+
+    cookies_file = "tools/cookies.json"
     if os.path.exists(cookies_file):
         return Scweet(cookies_file=cookies_file, config=scfg)
     elif auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE"):
@@ -493,7 +505,15 @@ def api_save_secrets():
         config["twitter_auth_token"] = twitter_token
         save_config(config)
         save_env_secret("TWITTER_AUTH_TOKEN", twitter_token)
-        saved.append("Twitter token")
+        saved.append("Twitter auth_token")
+
+    twitter_ct0 = data.get("twitter_ct0", "").strip()
+    if twitter_ct0:
+        config = load_config()
+        config["twitter_ct0"] = twitter_ct0
+        save_config(config)
+        save_env_secret("TWITTER_CT0", twitter_ct0)
+        saved.append("Twitter ct0 (CSRF token)")
 
     tg_token = data.get("telegram_token", "").strip()
     if tg_token:
