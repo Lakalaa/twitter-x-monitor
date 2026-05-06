@@ -81,6 +81,15 @@ def get_scraper():
     )
     scfg = ScweetConfig(concurrency=2, save_dir="outputs", save_format="json", min_delay_s=2.0)
 
+    # Clear stale Scweet state DB — a cached 401 puts the account in permanent
+    # cooldown and returns 0 results silently. Safe to delete; it is rebuilt fresh.
+    for _stale_db in ("scweet_state.db", "accounts.db"):
+        if os.path.exists(_stale_db):
+            try:
+                os.remove(_stale_db)
+            except OSError:
+                pass
+
     # If both tokens present, write a cookies.json so Scweet has CSRF support
     if auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE") and ct0:
         import json as _json
