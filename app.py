@@ -63,13 +63,20 @@ def add_log(msg: str):
     log.info(msg)
 
 
-def get_scraper():
+def get_scraper(db_path: str = None):
+    """
+    Return a ready Scweet instance.
+
+    db_path — if given, use that file as the persistent state DB so that
+              resume=True calls pick up where they left off (cursor pagination).
+              If None, a unique one-shot DB is created (no state kept).
+    """
     try:
         from Scweet import Scweet, ScweetConfig
     except ImportError:
         add_log("WARNING: Scweet not installed — scraping unavailable")
         return None
-    import json as _json
+    import json as _json, uuid as _uuid
     config = load_config()
     # Prefer config file over env var — env var may hold a stale bearer token
     auth_token = (
@@ -81,13 +88,13 @@ def get_scraper():
         or os.environ.get("TWITTER_CT0", "")
     )
 
-    # Use a unique DB filename per call to avoid cooldown cache and I/O conflicts.
-    # WAL mode is disabled because the Replit/Render filesystem rejects WAL journals.
-    import uuid as _uuid
-    _db_path = f"scweet_{_uuid.uuid4().hex[:8]}.db"
+    # Persistent DB → supplied by caller (cursor kept between calls).
+    # One-shot DB  → unique UUID file, deleted after the call naturally ages out.
+    # WAL mode is disabled — Replit/Render filesystems reject WAL journals.
+    _db = db_path if db_path else f"scweet_{_uuid.uuid4().hex[:8]}.db"
 
     scfg = ScweetConfig(
-        db_path=_db_path,
+        db_path=_db,
         enable_wal=False,
         concurrency=2,
         save_dir="outputs",
@@ -116,6 +123,19 @@ def get_scraper():
     elif auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE"):
         return Scweet(auth_token=auth_token, config=scfg)
     return None
+
+
+def cursor_db(kind: str, username: str) -> str:
+    """Return path to the persistent pagination DB for this (kind, username) pair."""
+    os.makedirs("tools", exist_ok=True)
+    return os.path.join("tools", f"cursor_{kind}_{username.lower()}.db")
+
+
+def reset_cursor(kind: str, username: str):
+    """Delete the saved cursor so the next call starts from the beginning."""
+    db = cursor_db(kind, username)
+    if os.path.exists(db):
+        os.remove(db)
 
 
 # ─── Core check logic ─────────────────────────────────────────────────────────
@@ -282,11 +302,15 @@ async def handle_telegram_commands():
                 elif cmd == "/help":
                     await bot.send_message(chat_id=chat_id, text=(
                         "📖 Commands:\n\n"
-                        "/check — run all scheduled checks immediately\n"
-                        "/followers username — get follower list of an account\n"
-                        "/following username — get following list of an account\n"
+                        "/check — run all scheduled checks immediately\n\n"
+                        "/followers username — fetch next 500 followers\n"
+                        "  Run again → next 500 (never repeats)\n"
+                        "/reset_followers username — restart from beginning\n\n"
+                        "/following username — fetch next 500 following\n"
+                        "  Run again → next 500 (never repeats)\n"
+                        "/reset_following username — restart from beginning\n\n"
                         "/compare username — full comparison:\n"
-                        "  🤝 Mutuals | 👁 Followers-only | 📤 Following-only\n"
+                        "  🤝 Mutuals | 👁 Followers-only | 📤 Following-only\n\n"
                         "/complaints topic — search complaint tweets (last 7 days)\n"
                         "/status — tracked accounts + last/next check times\n"
                         "/help — show this message\n\n"
@@ -329,42 +353,102 @@ async def handle_telegram_commands():
                 # ── /followers <username> ────────────────────────────────────
                 elif cmd == "/followers":
                     if not args:
-                        await bot.send_message(chat_id=chat_id, text="Usage: /followers username\nExample: /followers elonmusk")
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /followers username\n"
+                            "Example: /followers elonmusk\n\n"
+                            "Each call fetches the next 500 — run again to get the next page.\n"
+                            "To restart from the beginning: /reset_followers username"
+                        ))
                     else:
                         uname = args.lstrip("@").split()[0]
-                        await bot.send_message(chat_id=chat_id, text=f"▶️ Fetching followers of @{uname}… results will appear in the group.", disable_web_page_preview=True)
-                        def _run_followers(u=uname):
-                            s = get_scraper()
+                        db = cursor_db("followers", uname)
+                        is_resume = os.path.exists(db)
+                        page_note = "continuing from last position" if is_resume else "starting from the beginning"
+                        await bot.send_message(chat_id=chat_id, text=f"▶️ Fetching next 500 followers of @{uname} ({page_note})…", disable_web_page_preview=True)
+                        def _run_followers(u=uname, _db=db, _resume=is_resume):
+                            s = get_scraper(db_path=_db)
                             if not s:
                                 asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
                                 return
                             try:
-                                users = s.get_followers([u], limit=500, save=True)
-                                add_log(f"Followers @{u}: {len(users)}")
-                                asyncio.run(tb.send_users_to_telegram(users, "followers", u))
+                                users = s.get_followers([u], limit=500, save=True, resume=_resume)
+                                add_log(f"Followers @{u}: {len(users)} (resume={_resume})")
+                                if len(users) == 0:
+                                    reset_cursor("followers", u)
+                                    asyncio.run(tb.send_message(
+                                        f"✅ Reached the end of @{u}'s followers list.\n"
+                                        f"The next /followers {u} will start from the beginning again."
+                                    ))
+                                else:
+                                    asyncio.run(tb.send_users_to_telegram(users, "followers", u))
+                                    if len(users) < 500:
+                                        reset_cursor("followers", u)
+                                        asyncio.run(tb.send_message(
+                                            f"✅ That was the last page of @{u}'s followers ({len(users)} accounts).\n"
+                                            f"The next /followers {u} will start from the beginning."
+                                        ))
                             except Exception as e:
                                 asyncio.run(tb.send_message(f"❌ Error fetching followers of @{u}: {e}"))
                         threading.Thread(target=_run_followers, daemon=True).start()
 
+                # ── /reset_followers <username> ──────────────────────────────
+                elif cmd == "/reset_followers":
+                    if not args:
+                        await bot.send_message(chat_id=chat_id, text="Usage: /reset_followers username\nClears the saved position so the next /followers starts from the beginning.")
+                    else:
+                        uname = args.lstrip("@").split()[0]
+                        reset_cursor("followers", uname)
+                        await bot.send_message(chat_id=chat_id, text=f"✅ Cursor reset for @{uname} followers. Next /followers {uname} starts from the beginning.")
+
                 # ── /following <username> ────────────────────────────────────
                 elif cmd == "/following":
                     if not args:
-                        await bot.send_message(chat_id=chat_id, text="Usage: /following username\nExample: /following OpenAI")
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /following username\n"
+                            "Example: /following OpenAI\n\n"
+                            "Each call fetches the next 500 — run again to get the next page.\n"
+                            "To restart from the beginning: /reset_following username"
+                        ))
                     else:
                         uname = args.lstrip("@").split()[0]
-                        await bot.send_message(chat_id=chat_id, text=f"▶️ Fetching following of @{uname}… results will appear in the group.", disable_web_page_preview=True)
-                        def _run_following(u=uname):
-                            s = get_scraper()
+                        db = cursor_db("following", uname)
+                        is_resume = os.path.exists(db)
+                        page_note = "continuing from last position" if is_resume else "starting from the beginning"
+                        await bot.send_message(chat_id=chat_id, text=f"▶️ Fetching next 500 following of @{uname} ({page_note})…", disable_web_page_preview=True)
+                        def _run_following(u=uname, _db=db, _resume=is_resume):
+                            s = get_scraper(db_path=_db)
                             if not s:
                                 asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
                                 return
                             try:
-                                users = s.get_following([u], limit=500, save=True)
-                                add_log(f"Following @{u}: {len(users)}")
-                                asyncio.run(tb.send_users_to_telegram(users, "following", u))
+                                users = s.get_following([u], limit=500, save=True, resume=_resume)
+                                add_log(f"Following @{u}: {len(users)} (resume={_resume})")
+                                if len(users) == 0:
+                                    reset_cursor("following", u)
+                                    asyncio.run(tb.send_message(
+                                        f"✅ Reached the end of @{u}'s following list.\n"
+                                        f"The next /following {u} will start from the beginning again."
+                                    ))
+                                else:
+                                    asyncio.run(tb.send_users_to_telegram(users, "following", u))
+                                    if len(users) < 500:
+                                        reset_cursor("following", u)
+                                        asyncio.run(tb.send_message(
+                                            f"✅ That was the last page of @{u}'s following ({len(users)} accounts).\n"
+                                            f"The next /following {u} will start from the beginning."
+                                        ))
                             except Exception as e:
                                 asyncio.run(tb.send_message(f"❌ Error fetching following of @{u}: {e}"))
                         threading.Thread(target=_run_following, daemon=True).start()
+
+                # ── /reset_following <username> ──────────────────────────────
+                elif cmd == "/reset_following":
+                    if not args:
+                        await bot.send_message(chat_id=chat_id, text="Usage: /reset_following username\nClears the saved position so the next /following starts from the beginning.")
+                    else:
+                        uname = args.lstrip("@").split()[0]
+                        reset_cursor("following", uname)
+                        await bot.send_message(chat_id=chat_id, text=f"✅ Cursor reset for @{uname} following. Next /following {uname} starts from the beginning.")
 
                 # ── /compare <username> ─────────────────────────────────────
                 elif cmd == "/compare":
