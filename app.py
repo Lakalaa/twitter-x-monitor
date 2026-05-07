@@ -125,17 +125,52 @@ def get_scraper(db_path: str = None):
     return None
 
 
-def cursor_db(kind: str, username: str) -> str:
-    """Return path to the persistent pagination DB for this (kind, username) pair."""
-    os.makedirs("tools", exist_ok=True)
-    return os.path.join("tools", f"cursor_{kind}_{username.lower()}.db")
+def _cache_dir() -> str:
+    d = os.path.join("outputs", "cache")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
-def reset_cursor(kind: str, username: str):
-    """Delete the saved cursor so the next call starts from the beginning."""
-    db = cursor_db(kind, username)
-    if os.path.exists(db):
-        os.remove(db)
+def _cache_path(kind: str, username: str) -> str:
+    return os.path.join(_cache_dir(), f"{kind}_{username.lower()}.json")
+
+
+def _offset_path(kind: str, username: str) -> str:
+    return os.path.join(_cache_dir(), f"{kind}_{username.lower()}.offset")
+
+
+def read_cache(kind: str, username: str):
+    """Return the full cached list, or None if not yet scraped."""
+    p = _cache_path(kind, username)
+    if os.path.exists(p):
+        with open(p) as f:
+            return json.load(f)
+    return None
+
+
+def write_cache(kind: str, username: str, users: list):
+    with open(_cache_path(kind, username), "w") as f:
+        json.dump(users, f)
+
+
+def read_offset(kind: str, username: str) -> int:
+    p = _offset_path(kind, username)
+    if os.path.exists(p):
+        with open(p) as f:
+            return int(f.read().strip())
+    return 0
+
+
+def write_offset(kind: str, username: str, offset: int):
+    with open(_offset_path(kind, username), "w") as f:
+        f.write(str(offset))
+
+
+def clear_cache(kind: str, username: str):
+    """Delete cached list + offset so the next call re-scrapes from scratch."""
+    for p in (_cache_path(kind, username), _offset_path(kind, username)):
+        if os.path.exists(p):
+            os.remove(p)
 
 
 # ─── Core check logic ─────────────────────────────────────────────────────────
@@ -303,12 +338,16 @@ async def handle_telegram_commands():
                     await bot.send_message(chat_id=chat_id, text=(
                         "📖 Commands:\n\n"
                         "/check — run all scheduled checks immediately\n\n"
-                        "/followers username — fetch next 500 followers\n"
-                        "  Run again → next 500 (never repeats)\n"
-                        "/reset_followers username — restart from beginning\n\n"
-                        "/following username — fetch next 500 following\n"
-                        "  Run again → next 500 (never repeats)\n"
-                        "/reset_following username — restart from beginning\n\n"
+                        "/followers username\n"
+                        "  1st call: scrapes ALL followers, sends first 500\n"
+                        "  Next calls: sends next 500 from stored list (instant)\n"
+                        "  Auto re-scrapes when list is fully sent\n"
+                        "/rescrape_followers username — force fresh scrape\n\n"
+                        "/following username\n"
+                        "  1st call: scrapes ALL following, sends first 500\n"
+                        "  Next calls: sends next 500 from stored list (instant)\n"
+                        "  Auto re-scrapes when list is fully sent\n"
+                        "/rescrape_following username — force fresh scrape\n\n"
                         "/compare username — full comparison:\n"
                         "  🤝 Mutuals | 👁 Followers-only | 📤 Following-only\n\n"
                         "/complaints topic — search complaint tweets (last 7 days)\n"
@@ -356,49 +395,90 @@ async def handle_telegram_commands():
                         await bot.send_message(chat_id=chat_id, text=(
                             "Usage: /followers username\n"
                             "Example: /followers elonmusk\n\n"
-                            "Each call fetches the next 500 — run again to get the next page.\n"
-                            "To restart from the beginning: /reset_followers username"
+                            "First call: scrapes ALL followers and sends the first 500.\n"
+                            "Each call after: sends the next 500 from the stored list (instant, no re-scraping).\n"
+                            "When the list is exhausted it re-scrapes fresh data automatically.\n"
+                            "To force a fresh re-scrape now: /rescrape_followers username"
                         ))
                     else:
                         uname = args.lstrip("@").split()[0]
-                        db = cursor_db("followers", uname)
-                        is_resume = os.path.exists(db)
-                        page_note = "continuing from last position" if is_resume else "starting from the beginning"
-                        await bot.send_message(chat_id=chat_id, text=f"▶️ Fetching next 500 followers of @{uname} ({page_note})…", disable_web_page_preview=True)
-                        def _run_followers(u=uname, _db=db, _resume=is_resume):
-                            s = get_scraper(db_path=_db)
-                            if not s:
-                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
-                                return
-                            try:
-                                users = s.get_followers([u], limit=500, save=True, resume=_resume)
-                                add_log(f"Followers @{u}: {len(users)} (resume={_resume})")
-                                if len(users) == 0:
-                                    reset_cursor("followers", u)
+                        cached = read_cache("followers", uname)
+                        if cached is None:
+                            await bot.send_message(chat_id=chat_id, text=(
+                                f"🔍 No stored data for @{uname} followers yet.\n"
+                                f"Scraping ALL followers now — this may take a while for large accounts.\n"
+                                f"Results will appear in the group when ready."
+                            ), disable_web_page_preview=True)
+                        else:
+                            offset = read_offset("followers", uname)
+                            total = len(cached)
+                            remaining = total - offset
+                            await bot.send_message(chat_id=chat_id, text=(
+                                f"📋 Sending next 500 of @{uname}'s followers from stored list.\n"
+                                f"Position: {offset:,} / {total:,} ({remaining:,} remaining)"
+                            ), disable_web_page_preview=True)
+
+                        def _run_followers(u=uname):
+                            # Load or build cache
+                            users = read_cache("followers", u)
+                            if users is None:
+                                s = get_scraper()
+                                if not s:
+                                    asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
+                                    return
+                                try:
+                                    add_log(f"Scraping ALL followers of @{u}…")
+                                    users = s.get_followers([u], limit=None, save=True, resume=False)
+                                    add_log(f"Scraped {len(users):,} followers of @{u} — saved to cache")
+                                    write_cache("followers", u, users)
+                                    write_offset("followers", u, 0)
                                     asyncio.run(tb.send_message(
-                                        f"✅ Reached the end of @{u}'s followers list.\n"
-                                        f"The next /followers {u} will start from the beginning again."
+                                        f"✅ Scraped {len(users):,} followers of @{u}. Sending first 500…"
                                     ))
-                                else:
-                                    asyncio.run(tb.send_users_to_telegram(users, "followers", u))
-                                    if len(users) < 500:
-                                        reset_cursor("followers", u)
-                                        asyncio.run(tb.send_message(
-                                            f"✅ That was the last page of @{u}'s followers ({len(users)} accounts).\n"
-                                            f"The next /followers {u} will start from the beginning."
-                                        ))
-                            except Exception as e:
-                                asyncio.run(tb.send_message(f"❌ Error fetching followers of @{u}: {e}"))
+                                except Exception as e:
+                                    asyncio.run(tb.send_message(f"❌ Error scraping followers of @{u}: {e}"))
+                                    return
+
+                            # Send next 500 from cache
+                            offset = read_offset("followers", u)
+                            total = len(users)
+                            page = users[offset:offset + 500]
+
+                            if not page:
+                                clear_cache("followers", u)
+                                asyncio.run(tb.send_message(
+                                    f"✅ All {total:,} followers of @{u} have been sent.\n"
+                                    f"The next /followers {u} will re-scrape fresh data."
+                                ))
+                                return
+
+                            asyncio.run(tb.send_users_to_telegram(page, "followers", u))
+                            new_offset = offset + len(page)
+                            add_log(f"Followers @{u}: sent {new_offset:,}/{total:,}")
+
+                            if new_offset >= total:
+                                clear_cache("followers", u)
+                                asyncio.run(tb.send_message(
+                                    f"✅ That was the last batch — all {total:,} followers of @{u} sent.\n"
+                                    f"The next /followers {u} will re-scrape fresh data."
+                                ))
+                            else:
+                                write_offset("followers", u, new_offset)
+                                asyncio.run(tb.send_message(
+                                    f"📄 Sent {new_offset:,} of {total:,} total.\n"
+                                    f"Run /followers {u} again for the next 500."
+                                ))
+
                         threading.Thread(target=_run_followers, daemon=True).start()
 
-                # ── /reset_followers <username> ──────────────────────────────
-                elif cmd == "/reset_followers":
+                # ── /rescrape_followers <username> ───────────────────────────
+                elif cmd == "/rescrape_followers":
                     if not args:
-                        await bot.send_message(chat_id=chat_id, text="Usage: /reset_followers username\nClears the saved position so the next /followers starts from the beginning.")
+                        await bot.send_message(chat_id=chat_id, text="Usage: /rescrape_followers username\nDeletes the stored list and re-scrapes all followers from scratch.")
                     else:
                         uname = args.lstrip("@").split()[0]
-                        reset_cursor("followers", uname)
-                        await bot.send_message(chat_id=chat_id, text=f"✅ Cursor reset for @{uname} followers. Next /followers {uname} starts from the beginning.")
+                        clear_cache("followers", uname)
+                        await bot.send_message(chat_id=chat_id, text=f"🗑 Cache cleared for @{uname} followers. Run /followers {uname} to re-scrape everything fresh.")
 
                 # ── /following <username> ────────────────────────────────────
                 elif cmd == "/following":
@@ -406,49 +486,87 @@ async def handle_telegram_commands():
                         await bot.send_message(chat_id=chat_id, text=(
                             "Usage: /following username\n"
                             "Example: /following OpenAI\n\n"
-                            "Each call fetches the next 500 — run again to get the next page.\n"
-                            "To restart from the beginning: /reset_following username"
+                            "First call: scrapes ALL following and sends the first 500.\n"
+                            "Each call after: sends the next 500 from the stored list (instant, no re-scraping).\n"
+                            "When the list is exhausted it re-scrapes fresh data automatically.\n"
+                            "To force a fresh re-scrape now: /rescrape_following username"
                         ))
                     else:
                         uname = args.lstrip("@").split()[0]
-                        db = cursor_db("following", uname)
-                        is_resume = os.path.exists(db)
-                        page_note = "continuing from last position" if is_resume else "starting from the beginning"
-                        await bot.send_message(chat_id=chat_id, text=f"▶️ Fetching next 500 following of @{uname} ({page_note})…", disable_web_page_preview=True)
-                        def _run_following(u=uname, _db=db, _resume=is_resume):
-                            s = get_scraper(db_path=_db)
-                            if not s:
-                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
-                                return
-                            try:
-                                users = s.get_following([u], limit=500, save=True, resume=_resume)
-                                add_log(f"Following @{u}: {len(users)} (resume={_resume})")
-                                if len(users) == 0:
-                                    reset_cursor("following", u)
+                        cached = read_cache("following", uname)
+                        if cached is None:
+                            await bot.send_message(chat_id=chat_id, text=(
+                                f"🔍 No stored data for @{uname} following yet.\n"
+                                f"Scraping ALL following now — results will appear in the group when ready."
+                            ), disable_web_page_preview=True)
+                        else:
+                            offset = read_offset("following", uname)
+                            total = len(cached)
+                            remaining = total - offset
+                            await bot.send_message(chat_id=chat_id, text=(
+                                f"📋 Sending next 500 of @{uname}'s following from stored list.\n"
+                                f"Position: {offset:,} / {total:,} ({remaining:,} remaining)"
+                            ), disable_web_page_preview=True)
+
+                        def _run_following(u=uname):
+                            users = read_cache("following", u)
+                            if users is None:
+                                s = get_scraper()
+                                if not s:
+                                    asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
+                                    return
+                                try:
+                                    add_log(f"Scraping ALL following of @{u}…")
+                                    users = s.get_following([u], limit=None, save=True, resume=False)
+                                    add_log(f"Scraped {len(users):,} following of @{u} — saved to cache")
+                                    write_cache("following", u, users)
+                                    write_offset("following", u, 0)
                                     asyncio.run(tb.send_message(
-                                        f"✅ Reached the end of @{u}'s following list.\n"
-                                        f"The next /following {u} will start from the beginning again."
+                                        f"✅ Scraped {len(users):,} following of @{u}. Sending first 500…"
                                     ))
-                                else:
-                                    asyncio.run(tb.send_users_to_telegram(users, "following", u))
-                                    if len(users) < 500:
-                                        reset_cursor("following", u)
-                                        asyncio.run(tb.send_message(
-                                            f"✅ That was the last page of @{u}'s following ({len(users)} accounts).\n"
-                                            f"The next /following {u} will start from the beginning."
-                                        ))
-                            except Exception as e:
-                                asyncio.run(tb.send_message(f"❌ Error fetching following of @{u}: {e}"))
+                                except Exception as e:
+                                    asyncio.run(tb.send_message(f"❌ Error scraping following of @{u}: {e}"))
+                                    return
+
+                            offset = read_offset("following", u)
+                            total = len(users)
+                            page = users[offset:offset + 500]
+
+                            if not page:
+                                clear_cache("following", u)
+                                asyncio.run(tb.send_message(
+                                    f"✅ All {total:,} following of @{u} have been sent.\n"
+                                    f"The next /following {u} will re-scrape fresh data."
+                                ))
+                                return
+
+                            asyncio.run(tb.send_users_to_telegram(page, "following", u))
+                            new_offset = offset + len(page)
+                            add_log(f"Following @{u}: sent {new_offset:,}/{total:,}")
+
+                            if new_offset >= total:
+                                clear_cache("following", u)
+                                asyncio.run(tb.send_message(
+                                    f"✅ That was the last batch — all {total:,} following of @{u} sent.\n"
+                                    f"The next /following {u} will re-scrape fresh data."
+                                ))
+                            else:
+                                write_offset("following", u, new_offset)
+                                asyncio.run(tb.send_message(
+                                    f"📄 Sent {new_offset:,} of {total:,} total.\n"
+                                    f"Run /following {u} again for the next 500."
+                                ))
+
                         threading.Thread(target=_run_following, daemon=True).start()
 
-                # ── /reset_following <username> ──────────────────────────────
-                elif cmd == "/reset_following":
+                # ── /rescrape_following <username> ───────────────────────────
+                elif cmd == "/rescrape_following":
                     if not args:
-                        await bot.send_message(chat_id=chat_id, text="Usage: /reset_following username\nClears the saved position so the next /following starts from the beginning.")
+                        await bot.send_message(chat_id=chat_id, text="Usage: /rescrape_following username\nDeletes the stored list and re-scrapes all following from scratch.")
                     else:
                         uname = args.lstrip("@").split()[0]
-                        reset_cursor("following", uname)
-                        await bot.send_message(chat_id=chat_id, text=f"✅ Cursor reset for @{uname} following. Next /following {uname} starts from the beginning.")
+                        clear_cache("following", uname)
+                        await bot.send_message(chat_id=chat_id, text=f"🗑 Cache cleared for @{uname} following. Run /following {uname} to re-scrape everything fresh.")
 
                 # ── /compare <username> ─────────────────────────────────────
                 elif cmd == "/compare":
