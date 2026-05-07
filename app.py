@@ -69,6 +69,7 @@ def get_scraper():
     except ImportError:
         add_log("WARNING: Scweet not installed — scraping unavailable")
         return None
+    import json as _json
     config = load_config()
     # Prefer config file over env var — env var may hold a stale bearer token
     auth_token = (
@@ -79,20 +80,31 @@ def get_scraper():
         config.get("twitter_ct0", "")
         or os.environ.get("TWITTER_CT0", "")
     )
-    scfg = ScweetConfig(concurrency=2, save_dir="outputs", save_format="json", min_delay_s=2.0)
 
-    # Clear stale Scweet state DB — a cached 401 puts the account in permanent
-    # cooldown and returns 0 results silently. Safe to delete; it is rebuilt fresh.
-    for _stale_db in ("scweet_state.db", "accounts.db"):
-        if os.path.exists(_stale_db):
-            try:
-                os.remove(_stale_db)
-            except OSError:
-                pass
+    # Use a unique DB filename per call to avoid cooldown cache and I/O conflicts.
+    # WAL mode is disabled because the Replit/Render filesystem rejects WAL journals.
+    import uuid as _uuid
+    _db_path = f"scweet_{_uuid.uuid4().hex[:8]}.db"
+
+    scfg = ScweetConfig(
+        db_path=_db_path,
+        enable_wal=False,
+        concurrency=2,
+        save_dir="outputs",
+        save_format="json",
+        min_delay_s=2.0,
+        # Fetch up to 100 accounts per Twitter API page (maximum allowed)
+        api_page_size=100,
+        # Keep paginating even if one page comes back empty (sparse result sets)
+        max_empty_pages=3,
+        # Raise the per-day request budget so large follow lists aren't cut short
+        daily_requests_limit=500,
+        # Don't wait 30 days to retry after a single 401 — just 5 minutes
+        auth_cooldown_s=300,
+    )
 
     # If both tokens present, write a cookies.json so Scweet has CSRF support
     if auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE") and ct0:
-        import json as _json
         cookies_data = [{"username": "primary", "cookies": {"auth_token": auth_token, "ct0": ct0}}]
         os.makedirs("tools", exist_ok=True)
         with open("tools/cookies.json", "w") as _f:
