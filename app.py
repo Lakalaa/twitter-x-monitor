@@ -125,6 +125,53 @@ def get_scraper(db_path: str = None):
     return None
 
 
+def _scrape_with_progress(scrape_fn, kind: str, username: str):
+    """
+    Run scrape_fn() in the current thread while a background heartbeat sends
+    a Telegram ping every 60 s so the user knows the job is alive.
+    Retries once automatically if the first attempt returns 0 results.
+    Returns the list of users (may be empty on total failure).
+    """
+    import threading as _th
+
+    _done = _th.Event()
+    _elapsed = [0]
+
+    def _heartbeat():
+        while not _done.wait(60):
+            _elapsed[0] += 60
+            if not _done.is_set():
+                asyncio.run(tb.send_message(
+                    f"⏳ Still scraping @{username} {kind}… "
+                    f"{_elapsed[0] // 60} min elapsed, please wait."
+                ))
+
+    hb = _th.Thread(target=_heartbeat, daemon=True)
+    hb.start()
+    try:
+        users = scrape_fn()
+    except Exception as exc:
+        _done.set()
+        add_log(f"Scrape error ({kind} @{username}): {exc}")
+        asyncio.run(tb.send_message(f"❌ Scrape error for @{username} {kind}: {exc}"))
+        return []
+    finally:
+        _done.set()
+
+    # Retry once on unexpected empty result (transient Twitter hiccup)
+    if len(users) == 0:
+        add_log(f"Scrape returned 0 for {kind} @{username} — retrying once…")
+        asyncio.run(tb.send_message(f"⚠️ Got 0 results for @{username} {kind}, retrying once…"))
+        try:
+            users = scrape_fn()
+        except Exception as exc2:
+            add_log(f"Retry scrape error ({kind} @{username}): {exc2}")
+            asyncio.run(tb.send_message(f"❌ Retry also failed for @{username} {kind}: {exc2}"))
+            return []
+
+    return users
+
+
 def _cache_dir() -> str:
     d = os.path.join("outputs", "cache")
     os.makedirs(d, exist_ok=True)
@@ -426,18 +473,19 @@ async def handle_telegram_commands():
                                 if not s:
                                     asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
                                     return
-                                try:
-                                    add_log(f"Scraping ALL followers of @{u}…")
-                                    users = s.get_followers([u], limit=None, save=True, resume=False)
-                                    add_log(f"Scraped {len(users):,} followers of @{u} — saved to cache")
-                                    write_cache("followers", u, users)
-                                    write_offset("followers", u, 0)
-                                    asyncio.run(tb.send_message(
-                                        f"✅ Scraped {len(users):,} followers of @{u}. Sending first 500…"
-                                    ))
-                                except Exception as e:
-                                    asyncio.run(tb.send_message(f"❌ Error scraping followers of @{u}: {e}"))
+                                add_log(f"Scraping ALL followers of @{u}…")
+                                users = _scrape_with_progress(
+                                    lambda: s.get_followers([u], limit=None, save=True, resume=False),
+                                    "followers", u
+                                )
+                                if not users:
                                     return
+                                add_log(f"Scraped {len(users):,} followers of @{u} — saved to cache")
+                                write_cache("followers", u, users)
+                                write_offset("followers", u, 0)
+                                asyncio.run(tb.send_message(
+                                    f"✅ Scraped {len(users):,} followers of @{u}. Sending first 500…"
+                                ))
 
                             # Send next 500 from cache
                             offset = read_offset("followers", u)
@@ -515,18 +563,19 @@ async def handle_telegram_commands():
                                 if not s:
                                     asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
                                     return
-                                try:
-                                    add_log(f"Scraping ALL following of @{u}…")
-                                    users = s.get_following([u], limit=None, save=True, resume=False)
-                                    add_log(f"Scraped {len(users):,} following of @{u} — saved to cache")
-                                    write_cache("following", u, users)
-                                    write_offset("following", u, 0)
-                                    asyncio.run(tb.send_message(
-                                        f"✅ Scraped {len(users):,} following of @{u}. Sending first 500…"
-                                    ))
-                                except Exception as e:
-                                    asyncio.run(tb.send_message(f"❌ Error scraping following of @{u}: {e}"))
+                                add_log(f"Scraping ALL following of @{u}…")
+                                users = _scrape_with_progress(
+                                    lambda: s.get_following([u], limit=None, save=True, resume=False),
+                                    "following", u
+                                )
+                                if not users:
                                     return
+                                add_log(f"Scraped {len(users):,} following of @{u} — saved to cache")
+                                write_cache("following", u, users)
+                                write_offset("following", u, 0)
+                                asyncio.run(tb.send_message(
+                                    f"✅ Scraped {len(users):,} following of @{u}. Sending first 500…"
+                                ))
 
                             offset = read_offset("following", u)
                             total = len(users)
