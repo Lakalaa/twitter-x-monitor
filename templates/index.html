@@ -132,6 +132,16 @@
     </div>
 
     <div class="card">
+      <h2>Scraped Data Cache</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px">
+        Accounts with data stored locally. Each /followers or /following command sends the next 500 from here instantly.
+      </p>
+      <div id="cache-table">
+        <div style="font-size:13px;color:#6b7280">Loading cache…</div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Activity Log</h2>
       <div class="log-box" id="log-box">
         <div class="entry" style="color:#6b7280">Waiting for activity...</div>
@@ -266,8 +276,12 @@
       <div class="commands-box">
         <div class="cmd"><code>/start</code><div class="desc">Show welcome message and all available commands</div></div>
         <div class="cmd"><code>/check</code><div class="desc">Run all checks from Targets immediately — sends results to the group</div></div>
-        <div class="cmd"><code>/followers elonmusk</code><div class="desc">Get followers of any account right now (limit 500)</div></div>
-        <div class="cmd"><code>/following OpenAI</code><div class="desc">Get following list of any account right now (limit 500)</div></div>
+        <div class="cmd"><code>/followers elonmusk</code><div class="desc">First call: scrapes ALL followers, sends first 500. Each next call sends the next 500 instantly from cache.</div></div>
+        <div class="cmd"><code>/following OpenAI</code><div class="desc">Same as /followers but for the accounts they follow.</div></div>
+        <div class="cmd"><code>/rescrape_followers username</code><div class="desc">Clear cache and force a fresh re-scrape of followers from scratch.</div></div>
+        <div class="cmd"><code>/rescrape_following username</code><div class="desc">Clear cache and force a fresh re-scrape of following from scratch.</div></div>
+        <div class="cmd"><code>/compare username</code><div class="desc">Show mutuals, followers-only, and following-only for any account.</div></div>
+        <div class="cmd"><code>/replies https://x.com/user/status/ID</code><div class="desc">Scrape all replies to a tweet — each reply shows the commenter's account and their message.</div></div>
         <div class="cmd"><code>/complaints your brand</code><div class="desc">Search complaint tweets about any topic (last 7 days)</div></div>
         <div class="cmd"><code>/status</code><div class="desc">Show which accounts are tracked + last/next check times</div></div>
         <div class="cmd"><code>/help</code><div class="desc">Show all commands</div></div>
@@ -322,6 +336,32 @@ async function refreshStatus() {
 }
 setInterval(refreshStatus, 4000);
 refreshStatus();
+
+// ── Cache status table ─────────────────────────────────────────────────────────
+async function refreshCacheTable() {
+  const items = await fetch('/api/cache-status').then(r => r.json()).catch(() => []);
+  const el = document.getElementById('cache-table');
+  if (!items.length) {
+    el.innerHTML = '<div style="font-size:13px;color:#6b7280">No scraped data yet. Use /followers or /following in Telegram to scrape an account.</div>';
+    return;
+  }
+  const kindIcon = k => k === 'followers' ? '👥' : k === 'following' ? '➡️' : '💬';
+  const rows = items.map(it => `
+    <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid #1a1d27;flex-wrap:wrap">
+      <span style="font-size:18px">${kindIcon(it.kind)}</span>
+      <span style="font-weight:600;color:#fff;min-width:120px">@${it.username}</span>
+      <span style="font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;min-width:80px">${it.kind}</span>
+      <span style="background:#252836;border-radius:6px;padding:3px 10px;font-size:13px;color:#22c55e">${it.count.toLocaleString()} total</span>
+      ${it.remaining > 0
+        ? `<span style="background:#252836;border-radius:6px;padding:3px 10px;font-size:13px;color:#f59e0b">${it.remaining.toLocaleString()} remaining</span>`
+        : `<span style="background:#252836;border-radius:6px;padding:3px 10px;font-size:13px;color:#6b7280">all sent</span>`
+      }
+      <span style="font-size:12px;color:#6b7280;margin-left:auto">scraped ${it.scraped_at}</span>
+    </div>`).join('');
+  el.innerHTML = rows;
+}
+setInterval(refreshCacheTable, 8000);
+refreshCacheTable();
 
 // ── Controls ──────────────────────────────────────────────────────────────────
 async function startMonitor() {
