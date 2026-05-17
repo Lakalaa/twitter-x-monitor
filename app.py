@@ -370,41 +370,49 @@ async def handle_telegram_commands():
                 if cmd == "/start":
                     await bot.send_message(chat_id=chat_id, text=(
                         "👋 Twitter/X Monitor Bot\n\n"
-                        "Use these commands here or in the group:\n\n"
-                        "/check — run all checks right now\n"
-                        "/followers username — get someone's followers\n"
-                        "/following username — get someone's following list\n"
+                        "Commands:\n\n"
+                        "/followers username — get followers (500 per call)\n"
+                        "/following username — get following (500 per call)\n"
+                        "/compare username — mutuals / followers-only / following-only\n"
+                        "/replies <tweet_url> — scrape all replies to a tweet\n"
+                        "/mirror <src_url> <tgt_url> — copy replies from one tweet onto another\n"
                         "/complaints topic — search complaint tweets\n"
-                        "/status — see what's being monitored\n"
-                        "/help — show this message\n\n"
-                        "Results are always sent to the group."
+                        "/check — run all scheduled checks now\n"
+                        "/status — monitoring status\n"
+                        "/help — full command reference\n\n"
+                        "Results are sent to the group."
                     ), disable_web_page_preview=True)
 
                 # ── /help ───────────────────────────────────────────────────
                 elif cmd == "/help":
                     await bot.send_message(chat_id=chat_id, text=(
-                        "📖 Commands:\n\n"
-                        "/check — run all scheduled checks immediately\n\n"
+                        "📖 Full command reference:\n\n"
+                        "── Followers & Following ──\n"
                         "/followers username\n"
                         "  1st call: scrapes ALL followers, sends first 500\n"
-                        "  Next calls: sends next 500 from stored list (instant)\n"
-                        "  Auto re-scrapes when list is fully sent\n"
-                        "/rescrape_followers username — force fresh scrape\n\n"
+                        "  Next calls: next 500 instantly from cache\n"
+                        "/rescrape_followers username — force fresh re-scrape\n\n"
                         "/following username\n"
                         "  1st call: scrapes ALL following, sends first 500\n"
-                        "  Next calls: sends next 500 from stored list (instant)\n"
-                        "  Auto re-scrapes when list is fully sent\n"
-                        "/rescrape_following username — force fresh scrape\n\n"
-                        "/compare username — full comparison:\n"
+                        "  Next calls: next 500 instantly from cache\n"
+                        "/rescrape_following username — force fresh re-scrape\n\n"
+                        "/compare username\n"
                         "  🤝 Mutuals | 👁 Followers-only | 📤 Following-only\n\n"
-                        "/complaints topic — search complaint tweets (last 7 days)\n"
-                        "/status — tracked accounts + last/next check times\n"
-                        "/help — show this message\n\n"
-                        "💡 Tip: add the same account to both 'Track followers of'\n"
-                        "and 'Track following of' in the dashboard — scheduled\n"
-                        "checks will automatically run the full /compare analysis.\n\n"
-                        "Works in this chat and in the group.\n"
-                        "In the group: /compare@" + bot_info.username + " username"
+                        "── Tweet Replies ──\n"
+                        "/replies <tweet_url>\n"
+                        "  Scrape all replies — shows commenter + their text\n\n"
+                        "/mirror <source_url> <target_url>\n"
+                        "  Scrapes replies from source tweet and posts each one\n"
+                        "  as a comment on target tweet (from your account).\n"
+                        "  Format: 💬 @originaluser: their comment\n"
+                        "  Posts 1 reply every 8s (Twitter rate limit)\n\n"
+                        "── Other ──\n"
+                        "/complaints topic — complaint tweets (last 7 days)\n"
+                        "/check — run all scheduled checks now\n"
+                        "/status — monitoring status + tracked accounts\n"
+                        "/help — this message\n\n"
+                        "Works in this DM and in the group.\n"
+                        "In group: /command@" + bot_info.username + " args"
                     ), disable_web_page_preview=True)
 
                 # ── /status ─────────────────────────────────────────────────
@@ -700,6 +708,137 @@ async def handle_telegram_commands():
                                 add_log(f"Replies error: {e}")
                                 asyncio.run(tb.send_message(f"❌ Error scraping replies: {e}"))
                         threading.Thread(target=_run_replies, daemon=True).start()
+
+                # ── /mirror <source_tweet_url> <target_tweet_url> ────────────
+                elif cmd == "/mirror":
+                    parts = args.strip().split()
+                    if len(parts) < 2:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /mirror <source_tweet_url> <target_tweet_url>\n\n"
+                            "Scrapes all replies from the SOURCE tweet, then posts each one "
+                            "as a reply on the TARGET tweet (from your account).\n\n"
+                            "Example:\n"
+                            "/mirror https://x.com/someone/status/111 https://x.com/you/status/222\n\n"
+                            "Each posted comment will look like:\n"
+                            "💬 @originaluser: their comment text\n\n"
+                            "⚠️ Twitter rate-limits posting — large threads are posted slowly (1 every 8s)."
+                        ), disable_web_page_preview=True)
+                    else:
+                        src_url    = parts[0]
+                        target_url = parts[1]
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=(
+                                f"🔁 Mirror started.\n"
+                                f"Source: {src_url}\n"
+                                f"Target: {target_url}\n\n"
+                                f"Scraping replies from source… will post them one by one on the target tweet."
+                            ),
+                            disable_web_page_preview=True
+                        )
+                        def _run_mirror(src=src_url, tgt=target_url):
+                            import re as _re
+                            import sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                            import twitter_post as _tp
+
+                            # ── 1. Resolve target tweet ID ────────────────────
+                            m_tgt = _re.search(r"(?:x|twitter)\.com/[^/]+/status/(\d+)", tgt)
+                            if not m_tgt:
+                                asyncio.run(tb.send_message(f"❌ Could not parse target tweet ID from:\n{tgt}"))
+                                return
+                            target_id = m_tgt.group(1)
+
+                            # ── 2. Scrape replies from source ─────────────────
+                            sc = get_scraper()
+                            if not sc:
+                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
+                                return
+
+                            m_src = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", src)
+                            src_author = m_src.group(1) if m_src else ""
+                            src_id     = m_src.group(2) if m_src else ""
+
+                            add_log(f"Mirror: scraping replies from tweet {src_id} by @{src_author}…")
+                            try:
+                                query   = f"conversation_id:{src_id}" if src_id else src
+                                replies = sc.search(query=query, limit=500, save=True, filter_replies=False)
+                                if src_id:
+                                    replies = [r for r in replies
+                                               if str(r.get("id", "")) != src_id
+                                               and str(r.get("tweet_id", "")) != src_id]
+                            except Exception as exc:
+                                asyncio.run(tb.send_message(f"❌ Error scraping source tweet replies: {exc}"))
+                                return
+
+                            if not replies:
+                                asyncio.run(tb.send_message(
+                                    f"⚠️ No replies found for source tweet.\n"
+                                    f"The tweet might have no replies, or the search returned no results."
+                                ))
+                                return
+
+                            asyncio.run(tb.send_message(
+                                f"✅ Found {len(replies):,} replies. "
+                                f"Now posting them on target tweet (1 every 8s to avoid rate limits)…"
+                            ))
+
+                            # ── 3. Get posting credentials ────────────────────
+                            auth_token, ct0 = _tp.get_auth_from_config()
+                            if not auth_token or not ct0:
+                                asyncio.run(tb.send_message("❌ ct0 cookie is missing. Go to Dashboard → Settings and add both auth_token AND ct0."))
+                                return
+
+                            # ── 4. Post each reply on target tweet ────────────
+                            ok_count   = 0
+                            fail_count = 0
+                            for i, reply in enumerate(replies):
+                                username = (reply.get("user", {}).get("screen_name")
+                                            or reply.get("username", "unknown"))
+                                text     = (reply.get("text") or reply.get("rawContent") or "").strip()
+                                if not text:
+                                    continue
+
+                                # Format: attribution + original text (Twitter max 280 chars)
+                                prefix  = f"💬 @{username}: "
+                                max_txt = 280 - len(prefix) - 3
+                                body    = text[:max_txt] + ("…" if len(text) > max_txt else "")
+                                post_text = prefix + body
+
+                                result = _tp.post_reply(post_text, target_id, auth_token, ct0)
+                                if result["ok"]:
+                                    ok_count += 1
+                                    add_log(f"Mirror: posted reply {ok_count} (@{username})")
+                                else:
+                                    fail_count += 1
+                                    add_log(f"Mirror: post failed (@{username}): {result['error']}")
+                                    # If we hit auth/rate errors early, abort
+                                    if fail_count >= 3 and ok_count == 0:
+                                        asyncio.run(tb.send_message(
+                                            f"❌ Posting is failing (3 errors, 0 successes). Stopping.\n"
+                                            f"Last error: {result['error']}\n\n"
+                                            f"Check that your ct0 cookie is correct and fresh (Settings tab)."
+                                        ))
+                                        return
+
+                                # Progress update every 25 posts
+                                if (i + 1) % 25 == 0:
+                                    asyncio.run(tb.send_message(
+                                        f"🔁 Mirror progress: {i+1}/{len(replies)} — "
+                                        f"✅ {ok_count} posted, ❌ {fail_count} failed"
+                                    ))
+
+                                time.sleep(8)  # stay within Twitter's rate limits
+
+                            asyncio.run(tb.send_message(
+                                f"🏁 Mirror complete!\n"
+                                f"Source: {src}\n"
+                                f"Target: {tgt}\n"
+                                f"✅ {ok_count} replies posted | ❌ {fail_count} failed"
+                            ))
+                            add_log(f"Mirror done: {ok_count} posted, {fail_count} failed")
+
+                        threading.Thread(target=_run_mirror, daemon=True).start()
 
                 # ── /complaints <query> ──────────────────────────────────────
                 elif cmd == "/complaints":
