@@ -466,7 +466,6 @@ async def handle_telegram_commands():
                             ), disable_web_page_preview=True)
 
                         def _run_followers(u=uname):
-                            # Load or build cache
                             users = read_cache("followers", u)
                             if users is None:
                                 s = get_scraper()
@@ -487,10 +486,9 @@ async def handle_telegram_commands():
                                     f"✅ Scraped {len(users):,} followers of @{u}. Sending first 500…"
                                 ))
 
-                            # Send next 500 from cache
                             offset = read_offset("followers", u)
-                            total = len(users)
-                            page = users[offset:offset + 500]
+                            total  = len(users)
+                            page   = users[offset:offset + 500]
 
                             if not page:
                                 clear_cache("followers", u)
@@ -500,7 +498,7 @@ async def handle_telegram_commands():
                                 ))
                                 return
 
-                            asyncio.run(tb.send_users_to_telegram(page, "followers", u))
+                            asyncio.run(tb.send_users_page(page, "followers", u, offset, total))
                             new_offset = offset + len(page)
                             add_log(f"Followers @{u}: sent {new_offset:,}/{total:,}")
 
@@ -578,8 +576,8 @@ async def handle_telegram_commands():
                                 ))
 
                             offset = read_offset("following", u)
-                            total = len(users)
-                            page = users[offset:offset + 500]
+                            total  = len(users)
+                            page   = users[offset:offset + 500]
 
                             if not page:
                                 clear_cache("following", u)
@@ -589,7 +587,7 @@ async def handle_telegram_commands():
                                 ))
                                 return
 
-                            asyncio.run(tb.send_users_to_telegram(page, "following", u))
+                            asyncio.run(tb.send_users_page(page, "following", u, offset, total))
                             new_offset = offset + len(page)
                             add_log(f"Following @{u}: sent {new_offset:,}/{total:,}")
 
@@ -650,6 +648,58 @@ async def handle_telegram_commands():
                             except Exception as e:
                                 asyncio.run(tb.send_message(f"❌ Error comparing @{u}: {e}"))
                         threading.Thread(target=_run_compare, daemon=True).start()
+
+                # ── /replies <tweet_url> ─────────────────────────────────────
+                elif cmd == "/replies":
+                    if not args:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /replies <tweet_url>\n"
+                            "Example: /replies https://x.com/elonmusk/status/123456789\n\n"
+                            "Scrapes all replies to that tweet and sends each commenter's "
+                            "name + their comment to the group."
+                        ))
+                    else:
+                        tweet_url = args.strip()
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"💬 Fetching replies for:\n{tweet_url}\nResults will appear in the group shortly.",
+                            disable_web_page_preview=True
+                        )
+                        def _run_replies(url=tweet_url):
+                            sc = get_scraper()
+                            if not sc:
+                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
+                                return
+                            try:
+                                # Extract tweet ID and author from URL
+                                # URL format: https://x.com/username/status/TWEET_ID
+                                import re as _re
+                                m = _re.search(r"x\.com/([^/]+)/status/(\d+)", url)
+                                tweet_author = m.group(1) if m else ""
+                                tweet_id     = m.group(2) if m else ""
+
+                                add_log(f"Scraping replies to tweet {tweet_id} by @{tweet_author}…")
+                                # Search for replies: replies to the tweet are tweets
+                                # that start with "@tweet_author" and reference the tweet id
+                                # Scweet search supports conversation_id filter
+                                query = f"conversation_id:{tweet_id}" if tweet_id else url
+                                replies = sc.search(
+                                    query=query,
+                                    limit=500,
+                                    save=True,
+                                    filter_replies=False,
+                                )
+                                # Filter out the original tweet itself
+                                if tweet_id:
+                                    replies = [r for r in replies
+                                               if str(r.get("id", "")) != tweet_id
+                                               and str(r.get("tweet_id", "")) != tweet_id]
+                                add_log(f"Replies scraped: {len(replies)} for tweet {tweet_id}")
+                                asyncio.run(tb.send_replies_to_telegram(replies, url, tweet_author))
+                            except Exception as e:
+                                add_log(f"Replies error: {e}")
+                                asyncio.run(tb.send_message(f"❌ Error scraping replies: {e}"))
+                        threading.Thread(target=_run_replies, daemon=True).start()
 
                 # ── /complaints <query> ──────────────────────────────────────
                 elif cmd == "/complaints":
@@ -808,6 +858,46 @@ def api_save_token():
     config["twitter_auth_token"] = data.get("token", "")
     save_config(config)
     return jsonify({"ok": True})
+
+
+@app.route("/api/cache-status")
+def api_cache_status():
+    """Return info about all cached scrape results (for dashboard display)."""
+    cache_dir = _cache_dir()
+    results = []
+    if os.path.exists(cache_dir):
+        import glob as _glob
+        for f in sorted(_glob.glob(os.path.join(cache_dir, "*.json"))):
+            fname = os.path.basename(f)
+            # Parse kind_username.json
+            parts = fname.replace(".json", "").split("_", 1)
+            if len(parts) != 2:
+                continue
+            kind, username = parts
+            try:
+                with open(f) as fh:
+                    data = json.load(fh)
+                count = len(data) if isinstance(data, list) else 0
+            except Exception:
+                count = 0
+            offset_file = f.replace(".json", ".offset")
+            offset = 0
+            if os.path.exists(offset_file):
+                try:
+                    with open(offset_file) as fh:
+                        offset = int(fh.read().strip())
+                except Exception:
+                    pass
+            mtime = os.path.getmtime(f)
+            results.append({
+                "kind": kind,
+                "username": username,
+                "count": count,
+                "offset": offset,
+                "remaining": max(0, count - offset),
+                "scraped_at": datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M"),
+            })
+    return jsonify(results)
 
 
 @app.route("/api/status")
