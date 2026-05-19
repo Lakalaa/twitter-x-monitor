@@ -81,6 +81,23 @@
   .alert-error { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
   .alert-info { background: #1e3a5f; color: #93c5fd; border: 1px solid #1d4ed8; }
   #save-alert { display: none; }
+
+  /* Account pool panel */
+  .pool-header { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+  .pool-big { font-size: 36px; font-weight: 800; color: #fff; line-height: 1; }
+  .pool-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+  .pool-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .pill-green { background: #14532d; color: #86efac; border: 1px solid #166534; }
+  .pill-yellow { background: #451a03; color: #fbbf24; border: 1px solid #92400e; }
+  .pill-gray  { background: #252836; color: #9ca3af; border: 1px solid #374151; }
+  .pool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; margin-top: 12px; max-height: 220px; overflow-y: auto; }
+  .pool-account { background: #252836; border-radius: 6px; padding: 6px 10px; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .pool-account .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot-active { background: #22c55e; }
+  .dot-cooldown { background: #f59e0b; }
+  .pool-account .aname { color: #e0e0e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pool-account .astatus { font-size: 10px; color: #6b7280; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -128,6 +145,24 @@
         <button class="btn btn-success" onclick="startMonitor()">▶ Start Monitor</button>
         <button class="btn btn-danger" onclick="stopMonitor()">■ Stop Monitor</button>
         <button class="btn btn-primary" onclick="checkNow()">⚡ Check Now</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Account Pool <span style="font-size:12px;font-weight:400;color:#6b7280">(scraping sessions)</span></h2>
+      <div class="pool-header">
+        <div>
+          <div class="pool-big" id="pool-total">—</div>
+          <div class="pool-sub">accounts loaded</div>
+        </div>
+        <div class="pool-pills">
+          <span class="pill pill-green" id="pool-active-pill">— active</span>
+          <span class="pill pill-yellow" id="pool-cd-pill" style="display:none">— in cooldown</span>
+          <span class="pill pill-gray" id="pool-none-pill" style="display:none">No pool configured</span>
+        </div>
+      </div>
+      <div class="pool-grid" id="pool-grid">
+        <div style="font-size:13px;color:#6b7280;grid-column:1/-1">Loading pool…</div>
       </div>
     </div>
 
@@ -337,6 +372,44 @@ async function refreshStatus() {
 }
 setInterval(refreshStatus, 4000);
 refreshStatus();
+
+// ── Account pool ──────────────────────────────────────────────────────────────
+async function refreshPool() {
+  const d = await fetch('/api/account-pool').then(r => r.json()).catch(() => null);
+  if (!d) return;
+  document.getElementById('pool-total').textContent = d.total || 0;
+  const activePill = document.getElementById('pool-active-pill');
+  const cdPill     = document.getElementById('pool-cd-pill');
+  const nonePill   = document.getElementById('pool-none-pill');
+  if (d.total === 0) {
+    activePill.style.display = 'none';
+    cdPill.style.display = 'none';
+    nonePill.style.display = '';
+  } else {
+    activePill.style.display = '';
+    activePill.textContent = d.active + ' active';
+    nonePill.style.display = 'none';
+    if (d.cooldown_count > 0) {
+      cdPill.style.display = '';
+      cdPill.textContent = d.cooldown_count + ' in cooldown';
+    } else {
+      cdPill.style.display = 'none';
+    }
+  }
+  const grid = document.getElementById('pool-grid');
+  if (!d.accounts || d.accounts.length === 0) {
+    grid.innerHTML = '<div style="font-size:13px;color:#6b7280;grid-column:1/-1">No accounts in pool.</div>';
+    return;
+  }
+  grid.innerHTML = d.accounts.map(a => `
+    <div class="pool-account" title="${a.status}">
+      <span class="dot ${a.state === 'cooldown' ? 'dot-cooldown' : 'dot-active'}"></span>
+      <span class="aname">@${a.username}</span>
+      ${a.state === 'cooldown' ? `<span class="astatus">${a.status}</span>` : ''}
+    </div>`).join('');
+}
+setInterval(refreshPool, 15000);
+refreshPool();
 
 // ── Cache status table ─────────────────────────────────────────────────────────
 async function refreshCacheTable() {
