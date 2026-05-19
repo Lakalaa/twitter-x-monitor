@@ -31,6 +31,7 @@ STATE = {
     "next_check": None,
     "logs": [],
     "interval_minutes": 60,
+    "pool_cooldowns": {},   # username -> unix timestamp when cooldown expires
 }
 
 
@@ -1016,6 +1017,45 @@ def api_save_token():
     config["twitter_auth_token"] = data.get("token", "")
     save_config(config)
     return jsonify({"ok": True})
+
+
+@app.route("/api/account-pool")
+def api_account_pool():
+    """Return info about the multi-account scraping pool for dashboard display."""
+    cookies_file = "tools/cookies.json"
+    if not os.path.exists(cookies_file):
+        return jsonify({"total": 0, "active": 0, "cooldown_count": 0, "accounts": []})
+    try:
+        with open(cookies_file) as f:
+            pool = json.load(f)
+    except Exception:
+        return jsonify({"total": 0, "active": 0, "cooldown_count": 0, "accounts": []})
+
+    now = time.time()
+    # Expire old cooldowns
+    STATE["pool_cooldowns"] = {k: v for k, v in STATE["pool_cooldowns"].items() if v > now}
+    cooldowns = STATE["pool_cooldowns"]
+
+    accounts = []
+    for entry in pool:
+        uname = entry.get("username", "?")
+        cd_until = cooldowns.get(uname)
+        if cd_until and cd_until > now:
+            mins_left = max(1, int((cd_until - now) / 60))
+            status = f"cooldown ({mins_left}m)"
+            state = "cooldown"
+        else:
+            status = "active"
+            state = "active"
+        accounts.append({"username": uname, "status": status, "state": state})
+
+    in_cooldown = sum(1 for a in accounts if a["state"] == "cooldown")
+    return jsonify({
+        "total": len(pool),
+        "active": len(pool) - in_cooldown,
+        "cooldown_count": in_cooldown,
+        "accounts": accounts,
+    })
 
 
 @app.route("/api/cache-status")
