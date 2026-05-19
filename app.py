@@ -110,15 +110,34 @@ def get_scraper(db_path: str = None):
         auth_cooldown_s=300,
     )
 
-    # If both tokens present, write a cookies.json so Scweet has CSRF support
-    if auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE") and ct0:
-        cookies_data = [{"username": "primary", "cookies": {"auth_token": auth_token, "ct0": ct0}}]
-        os.makedirs("tools", exist_ok=True)
-        with open("tools/cookies.json", "w") as _f:
-            _json.dump(cookies_data, _f)
-
     cookies_file = "tools/cookies.json"
+
+    # Only write a single-account fallback if no cookies.json exists yet,
+    # or if it contains only the old single "primary" entry — never overwrite
+    # a multi-account pool already on disk.
+    existing_pool = []
     if os.path.exists(cookies_file):
+        try:
+            with open(cookies_file) as _f:
+                existing_pool = _json.load(_f)
+        except Exception:
+            existing_pool = []
+
+    is_single_primary = (
+        len(existing_pool) == 1
+        and existing_pool[0].get("username") == "primary"
+    )
+
+    if not os.path.exists(cookies_file) or is_single_primary:
+        if auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE") and ct0:
+            cookies_data = [{"username": "primary", "cookies": {"auth_token": auth_token, "ct0": ct0}}]
+            os.makedirs("tools", exist_ok=True)
+            with open(cookies_file, "w") as _f:
+                _json.dump(cookies_data, _f)
+
+    if os.path.exists(cookies_file):
+        pool_size = len(existing_pool) if existing_pool else "?"
+        add_log(f"Scweet: using cookies.json pool ({pool_size} accounts)")
         return Scweet(cookies_file=cookies_file, config=scfg)
     elif auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE"):
         return Scweet(auth_token=auth_token, config=scfg)
