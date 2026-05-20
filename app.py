@@ -2138,6 +2138,115 @@ def api_tagusers_status(job_id):
     return jsonify(job)
 
 
+# ── Tag Followers / Following ──────────────────────────────────────────────────
+
+@app.route("/api/tagfollowers", methods=["POST"])
+def api_tagfollowers():
+    data       = request.json or {}
+    kind       = data.get("kind", "").strip()       # "followers" or "following"
+    username   = data.get("username", "").strip()
+    target_url = data.get("target_url", "").strip()
+    count      = data.get("count")
+    try: count = int(count) if count else None
+    except (ValueError, TypeError): count = None
+
+    if kind not in ("followers", "following"):
+        return jsonify({"ok": False, "error": "kind must be 'followers' or 'following'"}), 400
+    if not username:
+        return jsonify({"ok": False, "error": "username is required"}), 400
+    if not target_url:
+        return jsonify({"ok": False, "error": "target_url is required"}), 400
+
+    cache_file = _cache_path(kind, username)
+    if not os.path.exists(cache_file):
+        return jsonify({"ok": False, "error": f"No cached {kind} for @{username}. Run /{kind} {username} in Telegram first."}), 400
+
+    import uuid
+    job_id = uuid.uuid4().hex[:8]
+    STATE.setdefault("tagfollowers_jobs", {})[job_id] = {
+        "status": "running", "done": 0, "total": 0, "ok": 0, "fail": 0,
+        "started_at": datetime.now().isoformat(), "finished_at": None, "message": "Starting…"
+    }
+
+    def _run(jid=job_id, knd=kind, uname=username, tgt=target_url, max_u=count):
+        import re as _re, json as _jj, sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        import twitter_post as _tp
+        job = STATE["tagfollowers_jobs"][jid]
+
+        try:
+            with open(cache_file) as f:
+                cached = _jj.load(f)
+            # Cache is list of user dicts with "username" / "screen_name" keys, or plain strings
+            usernames = []
+            for item in cached:
+                if isinstance(item, str):
+                    usernames.append(item)
+                elif isinstance(item, dict):
+                    u = item.get("username") or item.get("screen_name") or item.get("handle") or ""
+                    if u: usernames.append(u.lstrip("@"))
+        except Exception as exc:
+            job.update({"status": "error", "message": f"❌ Could not read cache: {exc}"}); return
+
+        if max_u: usernames = usernames[:max_u]
+        if not usernames:
+            job.update({"status": "done", "message": "⚠️ Cache is empty"}); return
+
+        m_tgt = _re.search(r"(?:x|twitter)\.com/[^/]+/status/(\d+)", tgt)
+        if not m_tgt:
+            job.update({"status": "error", "message": f"❌ Could not parse target tweet ID from {tgt}"}); return
+        target_id = m_tgt.group(1)
+
+        pool = _tp.load_account_pool()
+        if not pool:
+            job.update({"status": "error", "message": "❌ Account pool empty"}); return
+
+        auth_token, ct0 = _tp.get_auth_from_config()
+        if not auth_token or not ct0:
+            job.update({"status": "error", "message": "❌ ct0 missing — add both auth_token AND ct0 in Settings"}); return
+
+        batches = [usernames[i:i+5] for i in range(0, len(usernames), 5)]
+        job["total"]   = len(batches)
+        job["message"] = f"Tagging {len(usernames)} {knd} of @{uname} in {len(batches)} batches…"
+        add_log(f"TagFollowers API: {len(usernames)} {knd} → {len(batches)} batches on {tgt}")
+
+        ok_count = fail_count = pool_idx = 0
+        for i, batch in enumerate(batches):
+            post_text = " ".join(f"@{u}" for u in batch)
+            account   = pool[pool_idx % len(pool)]; pool_idx += 1
+            auth_tok  = account.get("cookies", {}).get("auth_token", "") or auth_token
+            ct0_val   = account.get("cookies", {}).get("ct0", "")        or ct0
+
+            res = _tp.post_reply(post_text, target_id, auth_tok, ct0_val)
+            if res.get("ok"):
+                ok_count += 1
+            else:
+                fail_count += 1
+                if fail_count >= 3 and ok_count == 0:
+                    job.update({"status": "error", "message": f"❌ Posting failing: {res.get('error','?')}"}); return
+            job["done"] = i + 1
+            job["ok"]   = ok_count
+            job["fail"] = fail_count
+            time.sleep(8)
+
+        job.update({
+            "status": "done", "finished_at": datetime.now().isoformat(),
+            "message": f"✅ Done! {ok_count} batches posted, {fail_count} failed"
+        })
+        add_log(f"TagFollowers API done: ✅{ok_count} ❌{fail_count}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/tagfollowers/<job_id>")
+def api_tagfollowers_status(job_id):
+    job = STATE.get("tagfollowers_jobs", {}).get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
 @app.route("/api/cache-status")
 def api_cache_status():
     """Return info about all cached scrape results (for dashboard display)."""
