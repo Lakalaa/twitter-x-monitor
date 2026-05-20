@@ -170,8 +170,19 @@
     <div class="card">
       <h2>Scraped Data Cache</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:12px">
-        Accounts with data stored locally. Each /followers or /following command sends the next 500 from here instantly.
+        Data stored locally from previous scrapes — followers, following, and scraped replier lists.
       </p>
+      <!-- Saved replier list (scraped_users.json) -->
+      <div id="saved-users-banner" style="display:none;background:#0a0c12;border:1px solid #1e3a2a;border-radius:8px;padding:12px 14px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:18px">🏷</span>
+          <span style="font-weight:600;color:#fff">Saved Repliers</span>
+          <span id="saved-users-count-pill" style="background:#14532d;color:#86efac;border-radius:6px;padding:3px 10px;font-size:13px"></span>
+          <span id="saved-users-time" style="font-size:12px;color:#6b7280;margin-left:auto"></span>
+        </div>
+        <div id="saved-users-source" style="font-size:12px;color:#6b7280;margin-top:6px;word-break:break-all"></div>
+        <div id="saved-users-preview" style="font-size:12px;color:#9ca3af;margin-top:4px"></div>
+      </div>
       <div id="cache-table">
         <div style="font-size:13px;color:#6b7280">Loading cache…</div>
       </div>
@@ -437,10 +448,25 @@
     <!-- SCRAPE & TAG USERS -->
     <div class="card">
       <h2>🏷 Scrape &amp; Tag Users</h2>
-      <p style="font-size:13px;color:#6b7280;margin-bottom:16px">
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px">
         Two-step: <strong style="color:#fff">Step 1</strong> scrapes all repliers from a tweet and saves them.
         <strong style="color:#fff">Step 2</strong> tags them 5 at a time under any post you choose.
       </p>
+
+      <!-- Currently saved banner -->
+      <div id="sc-current-banner" style="border-radius:8px;padding:12px 14px;margin-bottom:14px;display:none">
+        <div style="font-size:12px;color:#9ca3af;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Currently Saved</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span id="sc-banner-count" style="font-size:22px;font-weight:800;color:#6ee7b7"></span>
+          <span style="font-size:13px;color:#9ca3af">users saved</span>
+          <button onclick="clearSavedUsers()" style="margin-left:auto;background:transparent;border:1px solid #374151;color:#6b7280;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer">🗑 Clear</button>
+        </div>
+        <div id="sc-banner-source" style="font-size:12px;color:#6b7280;margin-top:4px;word-break:break-all"></div>
+        <div id="sc-banner-preview" style="font-size:12px;color:#4ade80;margin-top:4px"></div>
+      </div>
+      <div id="sc-no-data-banner" style="background:#1a1d27;border:1px dashed #374151;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#6b7280">
+        No saved users yet — run Step 1 to scrape repliers from a tweet.
+      </div>
 
       <!-- Step 1 -->
       <div style="background:#0a0c12;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-bottom:14px">
@@ -892,9 +918,72 @@ async function refreshPool() {
 setInterval(refreshPool, 15000);
 refreshPool();
 
+// ── Saved users (scraped_users.json) shared loader ────────────────────────────
+async function loadSavedUsers() {
+  const d = await fetch('/api/scrape/saved').then(r => r.json()).catch(() => null);
+
+  // ── Engage tab: Step 2 preview ────────────────────────────────────────────
+  const previewEl = document.getElementById('tu-saved-preview');
+  if (previewEl) {
+    if (!d || d.count === 0) {
+      previewEl.innerHTML = '<span style="color:#6b7280">No saved users yet — run Step 1 first.</span>';
+    } else {
+      const preview = (d.users || []).map(u => `@${u}`).join(', ');
+      const more = d.count > 10 ? ` +${d.count - 10} more` : '';
+      previewEl.innerHTML = `<span style="color:#6ee7b7">✅ ${d.count} users saved</span>` +
+        (d.source ? ` <span style="color:#6b7280;font-size:12px">from <em>${d.source.replace(/https?:\/\/(www\.)?(x|twitter)\.com\//,'').substring(0,50)}</em></span>` : '') +
+        `<br><span style="color:#9ca3af;font-size:12px">${preview}${more}</span>`;
+    }
+  }
+
+  // ── Engage tab: top banner in Scrape & Tag card ────────────────────────────
+  const banner   = document.getElementById('sc-current-banner');
+  const noBanner = document.getElementById('sc-no-data-banner');
+  if (banner && noBanner) {
+    if (d && d.count > 0) {
+      banner.style.display = '';
+      banner.style.background = '#0d2318';
+      banner.style.border = '1px solid #1e3a2a';
+      noBanner.style.display = 'none';
+      document.getElementById('sc-banner-count').textContent = d.count.toLocaleString();
+      document.getElementById('sc-banner-source').textContent = d.source ? '📍 Source: ' + d.source : '';
+      const prev = (d.users || []).map(u => '@' + u).join('  ');
+      const more2 = d.count > 10 ? `  … and ${d.count - 10} more` : '';
+      document.getElementById('sc-banner-preview').textContent = prev + more2;
+    } else {
+      banner.style.display = 'none';
+      noBanner.style.display = '';
+    }
+  }
+
+  // ── Dashboard: saved-users-banner ─────────────────────────────────────────
+  const dbBanner = document.getElementById('saved-users-banner');
+  if (dbBanner) {
+    if (d && d.count > 0) {
+      dbBanner.style.display = '';
+      document.getElementById('saved-users-count-pill').textContent = d.count.toLocaleString() + ' users';
+      document.getElementById('saved-users-source').textContent = d.source ? '📍 ' + d.source : '';
+      const pv = (d.users || []).map(u => '@' + u).join('  ');
+      const mv = d.count > 10 ? `  … +${d.count - 10} more` : '';
+      document.getElementById('saved-users-preview').textContent = pv + mv;
+    } else {
+      dbBanner.style.display = 'none';
+    }
+  }
+
+  return d;
+}
+
+async function clearSavedUsers() {
+  if (!confirm('Clear all saved users? This cannot be undone.')) return;
+  await fetch('/api/scrape/clear', { method: 'POST' });
+  loadSavedUsers();
+}
+
 // ── Cache status table ─────────────────────────────────────────────────────────
 async function refreshCacheTable() {
   const items = await fetch('/api/cache-status').then(r => r.json()).catch(() => []);
+  await loadSavedUsers();
   const el = document.getElementById('cache-table');
   if (!items.length) {
     el.innerHTML = '<div style="font-size:13px;color:#6b7280">No scraped data yet. Use /followers or /following in Telegram to scrape an account.</div>';
