@@ -1776,17 +1776,14 @@ def api_account_pool():
 
 @app.route("/api/engage", methods=["POST"])
 def api_engage():
-    """
-    Trigger bulk engagement on a tweet.
-    Body: { "tweet_url": "...", "action": "like|comment|both",
-            "comment_text": "...", "mention": "@user" }
-    Runs in a background thread; returns immediately with a job ID.
-    """
     data = request.json or {}
     tweet_url    = data.get("tweet_url", "").strip()
     action       = data.get("action", "like").strip()
     comment_text = data.get("comment_text", "").strip()
     mention      = data.get("mention", "").strip()
+    count        = data.get("count")
+    try: count = int(count) if count else None
+    except (ValueError, TypeError): count = None
 
     if not tweet_url:
         return jsonify({"ok": False, "error": "tweet_url is required"}), 400
@@ -1797,8 +1794,6 @@ def api_engage():
 
     import uuid
     job_id = uuid.uuid4().hex[:8]
-
-    # Store progress in STATE
     STATE.setdefault("engage_jobs", {})[job_id] = {
         "tweet_url": tweet_url, "action": action,
         "status": "running", "done": 0, "total": 0,
@@ -1806,17 +1801,12 @@ def api_engage():
         "finished_at": None,
     }
 
-    def _run(jid=job_id, url=tweet_url, act=action, text=comment_text, tag=mention):
-        from twitter_post import bulk_engage
+    def _run(jid=job_id, url=tweet_url, act=action, text=comment_text, tag=mention, n=count):
+        import sys as _sys; _sys.path.insert(0, "tools")
+        from twitter_post import bulk_engage, load_account_pool
         job = STATE["engage_jobs"][jid]
-        pool = []
-        cookies_file = "tools/cookies.json"
-        if os.path.exists(cookies_file):
-            try:
-                with open(cookies_file) as f:
-                    pool = json.load(f)
-            except Exception:
-                pass
+        pool = load_account_pool()
+        if n: pool = pool[:n]
         job["total"] = len(pool)
 
         def progress(done, total, username, status_str):
@@ -1827,7 +1817,7 @@ def api_engage():
 
         job["results"] = []
         result = bulk_engage(url, action=act, comment_text=text, mention=tag,
-                             delay_min=3.0, delay_max=8.0, progress_cb=progress)
+                             accounts=pool, delay_min=3.0, delay_max=8.0, progress_cb=progress)
         job.update({
             "status": "done",
             "ok": result.get("ok", 0),
@@ -1846,6 +1836,294 @@ def api_engage():
 @app.route("/api/engage/<job_id>")
 def api_engage_status(job_id):
     job = STATE.get("engage_jobs", {}).get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
+# ── Reply All ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/replyall", methods=["POST"])
+def api_replyall():
+    data        = request.json or {}
+    tweet_url   = data.get("tweet_url", "").strip()
+    reply_text  = data.get("reply_text", "").strip()
+    mention     = data.get("mention", "").strip()
+    no_admins   = bool(data.get("no_admins", False))
+    count       = data.get("count")
+    try: count = int(count) if count else None
+    except (ValueError, TypeError): count = None
+
+    if not tweet_url:
+        return jsonify({"ok": False, "error": "tweet_url is required"}), 400
+    if not reply_text and not mention:
+        return jsonify({"ok": False, "error": "reply_text is required"}), 400
+
+    import uuid
+    job_id = uuid.uuid4().hex[:8]
+    STATE.setdefault("replyall_jobs", {})[job_id] = {
+        "tweet_url": tweet_url, "status": "running",
+        "done": 0, "total": 0, "ok": 0, "fail": 0,
+        "started_at": datetime.now().isoformat(), "finished_at": None, "log": []
+    }
+
+    def _run(jid=job_id, url=tweet_url, rtext=reply_text, mtag=mention, skip=no_admins, n=count):
+        import re as _re, sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        import twitter_post as _tp
+        job = STATE["replyall_jobs"][jid]
+
+        def _log(msg):
+            job["log"] = (job.get("log") or [])[-49:] + [msg]
+            add_log(msg)
+
+        sc = get_scraper()
+        if not sc:
+            job.update({"status": "error", "log": ["❌ No Twitter auth_token set"]})
+            return
+
+        m = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", url)
+        tweet_id = m.group(2) if m else ""
+        if not tweet_id:
+            job.update({"status": "error", "log": [f"❌ Could not parse tweet ID from {url}"]})
+            return
+
+        _log(f"Scraping replies for tweet {tweet_id}…")
+        try:
+            replies = sc.search(query=f"conversation_id:{tweet_id}", limit=500, save=True, filter_replies=False)
+            replies, _, admins_removed = _filter_replies(replies, skip, tweet_id)
+        except Exception as exc:
+            job.update({"status": "error", "log": [f"❌ Scrape error: {exc}"]})
+            return
+
+        if not replies:
+            job.update({"status": "done", "log": ["⚠️ No replies found for that tweet."]})
+            return
+
+        pool = _tp.load_account_pool()
+        if n: pool = pool[:n]
+        if not pool:
+            job.update({"status": "error", "log": ["❌ Account pool empty"]})
+            return
+
+        job["total"] = len(replies)
+        admin_note = f" ({admins_removed} verified skipped)" if admins_removed else ""
+        _log(f"Found {len(replies)} replies{admin_note}. Replying with {len(pool)} accounts…")
+
+        ok_count = fail_count = pool_idx = 0
+        for i, reply in enumerate(replies):
+            commenter      = (reply.get("user", {}).get("screen_name") or reply.get("username", "unknown"))
+            reply_tweet_id = str(reply.get("id") or reply.get("tweet_id") or "")
+            if not reply_tweet_id:
+                fail_count += 1; job["fail"] = fail_count; continue
+
+            account = pool[pool_idx % len(pool)]; pool_idx += 1
+            auth_tok  = account.get("cookies", {}).get("auth_token", "")
+            ct0_val   = account.get("cookies", {}).get("ct0", "")
+            if not auth_tok or not ct0_val:
+                fail_count += 1; job["fail"] = fail_count; continue
+
+            parts_txt = []
+            if mtag: parts_txt.append(mtag)
+            parts_txt.append(f"@{commenter}")
+            if rtext: parts_txt.append(rtext)
+            post_text = " ".join(parts_txt)[:280]
+
+            res = _tp.post_reply(post_text, reply_tweet_id, auth_tok, ct0_val)
+            if res.get("ok"):
+                ok_count += 1
+            else:
+                fail_count += 1
+            job["done"] = i + 1
+            job["ok"]   = ok_count
+            job["fail"] = fail_count
+            time.sleep(5)
+
+        job.update({"status": "done", "finished_at": datetime.now().isoformat()})
+        _log(f"ReplyAll done: ✅{ok_count} sent ❌{fail_count} failed")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/replyall/<job_id>")
+def api_replyall_status(job_id):
+    job = STATE.get("replyall_jobs", {}).get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
+# ── Scrape & Tag Users ─────────────────────────────────────────────────────────
+
+@app.route("/api/scrape", methods=["POST"])
+def api_scrape():
+    data      = request.json or {}
+    tweet_url = data.get("tweet_url", "").strip()
+    no_admins = bool(data.get("no_admins", False))
+    if not tweet_url:
+        return jsonify({"ok": False, "error": "tweet_url is required"}), 400
+
+    import uuid
+    job_id = uuid.uuid4().hex[:8]
+    STATE.setdefault("scrape_jobs", {})[job_id] = {
+        "status": "running", "count": 0, "source": tweet_url,
+        "started_at": datetime.now().isoformat(), "finished_at": None, "message": "Scraping…"
+    }
+
+    def _run(jid=job_id, url=tweet_url, skip=no_admins):
+        import re as _re, json as _jj, sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        job = STATE["scrape_jobs"][jid]
+
+        sc = get_scraper()
+        if not sc:
+            job.update({"status": "error", "message": "❌ No Twitter auth_token set"}); return
+
+        m = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", url)
+        src_id = m.group(2) if m else ""
+        if not src_id:
+            job.update({"status": "error", "message": f"❌ Could not parse tweet ID from {url}"}); return
+
+        try:
+            replies = sc.search(query=f"conversation_id:{src_id}", limit=500, save=True, filter_replies=False)
+            replies, _, admins_removed = _filter_replies(replies, skip, src_id)
+        except Exception as exc:
+            job.update({"status": "error", "message": f"❌ Scrape error: {exc}"}); return
+
+        seen = set(); usernames = []
+        for r in replies:
+            u = (r.get("user", {}).get("screen_name") or r.get("username", "")).strip()
+            if u and u.lower() not in seen:
+                seen.add(u.lower()); usernames.append(u)
+
+        save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+        with open(save_path, "w") as f:
+            _jj.dump({"source": url, "users": usernames}, f, indent=2)
+
+        admin_note = f" ({admins_removed} verified skipped)" if admins_removed else ""
+        add_log(f"Scrape API: saved {len(usernames)} users from tweet {src_id}")
+        job.update({
+            "status": "done", "count": len(usernames), "source": url,
+            "finished_at": datetime.now().isoformat(),
+            "message": f"✅ Saved {len(usernames)} users{admin_note}"
+        })
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/scrape/<job_id>")
+def api_scrape_status(job_id):
+    job = STATE.get("scrape_jobs", {}).get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
+@app.route("/api/scrape/saved")
+def api_scrape_saved():
+    save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+    if not os.path.exists(save_path):
+        return jsonify({"count": 0, "source": None, "users": []})
+    try:
+        with open(save_path) as f:
+            data = json.load(f)
+        return jsonify({"count": len(data.get("users", [])), "source": data.get("source", ""), "users": data.get("users", [])[:10]})
+    except Exception:
+        return jsonify({"count": 0, "source": None, "users": []})
+
+
+@app.route("/api/tagusers", methods=["POST"])
+def api_tagusers():
+    data       = request.json or {}
+    target_url = data.get("target_url", "").strip()
+    no_admins  = bool(data.get("no_admins", False))
+    count      = data.get("count")
+    try: count = int(count) if count else None
+    except (ValueError, TypeError): count = None
+
+    if not target_url:
+        return jsonify({"ok": False, "error": "target_url is required"}), 400
+
+    save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+    if not os.path.exists(save_path):
+        return jsonify({"ok": False, "error": "No saved users. Run /scrape first."}), 400
+
+    import uuid
+    job_id = uuid.uuid4().hex[:8]
+    STATE.setdefault("tagusers_jobs", {})[job_id] = {
+        "status": "running", "done": 0, "total": 0, "ok": 0, "fail": 0,
+        "started_at": datetime.now().isoformat(), "finished_at": None, "message": "Starting…"
+    }
+
+    def _run(jid=job_id, tgt=target_url, skip=no_admins, max_u=count):
+        import re as _re, json as _jj, sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        import twitter_post as _tp
+        job = STATE["tagusers_jobs"][jid]
+
+        try:
+            with open(save_path) as f:
+                saved = _jj.load(f)
+            usernames = saved.get("users", [])
+        except Exception as exc:
+            job.update({"status": "error", "message": f"❌ Could not read saved users: {exc}"}); return
+
+        if max_u: usernames = usernames[:max_u]
+        if not usernames:
+            job.update({"status": "done", "message": "⚠️ Saved user list is empty"}); return
+
+        m_tgt = _re.search(r"(?:x|twitter)\.com/[^/]+/status/(\d+)", tgt)
+        if not m_tgt:
+            job.update({"status": "error", "message": f"❌ Could not parse target tweet ID from {tgt}"}); return
+        target_id = m_tgt.group(1)
+
+        pool = _tp.load_account_pool()
+        if not pool:
+            job.update({"status": "error", "message": "❌ Account pool empty"}); return
+
+        auth_token, ct0 = _tp.get_auth_from_config()
+        if not auth_token or not ct0:
+            job.update({"status": "error", "message": "❌ ct0 missing — add both auth_token AND ct0 in Settings"}); return
+
+        batches  = [usernames[i:i+5] for i in range(0, len(usernames), 5)]
+        job["total"]   = len(batches)
+        job["message"] = f"Tagging {len(usernames)} users in {len(batches)} batches…"
+        add_log(f"TagUsers API: {len(usernames)} users → {len(batches)} batches on {tgt}")
+
+        ok_count = fail_count = pool_idx = 0
+        for i, batch in enumerate(batches):
+            post_text = " ".join(f"@{u}" for u in batch)
+            account   = pool[pool_idx % len(pool)]; pool_idx += 1
+            auth_tok  = account.get("cookies", {}).get("auth_token", "") or auth_token
+            ct0_val   = account.get("cookies", {}).get("ct0", "")        or ct0
+
+            res = _tp.post_reply(post_text, target_id, auth_tok, ct0_val)
+            if res.get("ok"):
+                ok_count += 1
+            else:
+                fail_count += 1
+                if fail_count >= 3 and ok_count == 0:
+                    job.update({"status": "error", "message": f"❌ Posting failing: {res.get('error','?')}"}); return
+            job["done"] = i + 1
+            job["ok"]   = ok_count
+            job["fail"] = fail_count
+            time.sleep(8)
+
+        job.update({
+            "status": "done", "finished_at": datetime.now().isoformat(),
+            "message": f"✅ Done! {ok_count} batches posted, {fail_count} failed"
+        })
+        add_log(f"TagUsers API done: ✅{ok_count} ❌{fail_count}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/tagusers/<job_id>")
+def api_tagusers_status(job_id):
+    job = STATE.get("tagusers_jobs", {}).get(job_id)
     if not job:
         return jsonify({"error": "job not found"}), 404
     return jsonify(job)
