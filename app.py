@@ -337,6 +337,53 @@ def start_scheduler():
 scheduler_thread = None
 
 
+# ─── Reply filter helpers ──────────────────────────────────────────────────────
+
+def _is_admin(reply: dict) -> bool:
+    """
+    Return True if this scraped reply is from a verified/blue-tick (admin) account.
+    Checks multiple field locations Scweet may return.
+    """
+    user = reply.get("user", {}) or {}
+    return bool(
+        user.get("blue_verified")
+        or user.get("verified")
+        or user.get("is_blue_verified")
+        or reply.get("blue_verified")
+        or reply.get("verified")
+        or reply.get("is_blue_verified")
+    )
+
+
+def _filter_replies(replies: list, skip_admins: bool, tweet_id: str = "") -> tuple:
+    """
+    Filter reply list. Returns (filtered_list, total_before, admins_removed).
+    Also always strips the original tweet itself.
+    """
+    total_before = len(replies)
+    # Remove the original tweet
+    if tweet_id:
+        replies = [r for r in replies
+                   if str(r.get("id", "")) != tweet_id
+                   and str(r.get("tweet_id", "")) != tweet_id]
+    admins_removed = 0
+    if skip_admins:
+        before = len(replies)
+        replies = [r for r in replies if not _is_admin(r)]
+        admins_removed = before - len(replies)
+    return replies, total_before, admins_removed
+
+
+def _parse_no_admins(args: str) -> tuple:
+    """
+    Strip --no-admins flag from args string.
+    Returns (cleaned_args, skip_admins_bool).
+    """
+    if "--no-admins" in args:
+        return args.replace("--no-admins", "").strip(), True
+    return args.strip(), False
+
+
 # ─── Telegram Bot command handler ─────────────────────────────────────────────
 
 async def handle_telegram_commands():
@@ -394,9 +441,9 @@ async def handle_telegram_commands():
                         "/followers username — get followers (500 per call)\n"
                         "/following username — get following (500 per call)\n"
                         "/compare username — mutuals / followers-only / following-only\n"
-                        "/replies <tweet_url> — scrape all replies to a tweet\n"
-                        "/mirror <src_url> <tgt_url> — copy replies from one tweet onto another\n"
-                        "/replyall <tweet_url> <text> — reply to every commenter using 200 accounts\n"
+                        "/replies <tweet_url> [--no-admins] — scrape replies (skip verified with flag)\n"
+                        "/mirror <src> <tgt> [--no-admins] — copy replies to another tweet\n"
+                        "/replyall <tweet_url> [--no-admins] <text> — reply to every commenter\n"
                         "/complaints topic — search complaint tweets\n"
                         "/like <tweet_url> — like with all 200 accounts\n"
                         "/comment <tweet_url> [@mention] <text> — comment with all 200 accounts\n"
@@ -423,20 +470,22 @@ async def handle_telegram_commands():
                         "/compare username\n"
                         "  🤝 Mutuals | 👁 Followers-only | 📤 Following-only\n\n"
                         "── Tweet Replies ──\n"
-                        "/replies <tweet_url>\n"
-                        "  Scrape all replies — shows commenter + their text\n\n"
-                        "/mirror <source_url> <target_url>\n"
+                        "/replies <tweet_url> [--no-admins]\n"
+                        "  Scrape all replies — shows commenter + their text\n"
+                        "  Add --no-admins to skip verified/blue-tick accounts\n\n"
+                        "/mirror <source_url> <target_url> [--no-admins]\n"
                         "  Scrapes replies from source tweet and posts each one\n"
                         "  as a comment on target tweet (from your account).\n"
                         "  Format: 💬 @originaluser: their comment\n"
+                        "  Add --no-admins to skip verified accounts\n"
                         "  Posts 1 reply every 8s (Twitter rate limit)\n\n"
-                        "/replyall <tweet_url> [@mention] <text>\n"
+                        "/replyall <tweet_url> [--no-admins] [@mention] <text>\n"
                         "  Scrapes every reply under a tweet, then replies back\n"
                         "  to each commenter using your 200 accounts (rotating).\n"
                         "  One account replies to one commenter, then next account, etc.\n"
-                        "  Optional @mention is prepended to every reply.\n"
+                        "  Add --no-admins to skip verified accounts.\n"
                         "  Example: /replyall https://x.com/.../123 Thanks! 🙌\n"
-                        "  Example with mention: /replyall https://x.com/.../123 @elonmusk check this!\n\n"
+                        "  Example (skip verified): /replyall https://x.com/.../123 --no-admins Thanks!\n\n"
                         "── Bulk Engagement (200 accounts) ──\n"
                         "/like <tweet_url>\n"
                         "  Likes the tweet from all 200 accounts\n\n"
@@ -698,68 +747,60 @@ async def handle_telegram_commands():
                                 asyncio.run(tb.send_message(f"❌ Error comparing @{u}: {e}"))
                         threading.Thread(target=_run_compare, daemon=True).start()
 
-                # ── /replies <tweet_url> ─────────────────────────────────────
+                # ── /replies <tweet_url> [--no-admins] ───────────────────────
                 elif cmd == "/replies":
                     if not args:
                         await bot.send_message(chat_id=chat_id, text=(
-                            "Usage: /replies <tweet_url>\n"
-                            "Example: /replies https://x.com/elonmusk/status/123456789\n\n"
+                            "Usage: /replies <tweet_url> [--no-admins]\n\n"
                             "Scrapes all replies to that tweet and sends each commenter's "
-                            "name + their comment to the group."
+                            "name + their comment to the group.\n\n"
+                            "Add --no-admins to skip verified/blue-tick accounts:\n"
+                            "/replies https://x.com/user/status/123 --no-admins"
                         ))
                     else:
-                        tweet_url = args.strip()
+                        tweet_url, skip_admins = _parse_no_admins(args)
+                        filter_note = " (skipping verified accounts)" if skip_admins else ""
                         await bot.send_message(
                             chat_id=chat_id,
-                            text=f"💬 Fetching replies for:\n{tweet_url}\nResults will appear in the group shortly.",
+                            text=f"💬 Fetching replies for:\n{tweet_url}{filter_note}\nResults will appear in the group shortly.",
                             disable_web_page_preview=True
                         )
-                        def _run_replies(url=tweet_url):
+                        def _run_replies(url=tweet_url, skip=skip_admins):
                             sc = get_scraper()
                             if not sc:
                                 asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
                                 return
                             try:
-                                # Extract tweet ID and author from URL
-                                # URL format: https://x.com/username/status/TWEET_ID
                                 import re as _re
                                 m = _re.search(r"x\.com/([^/]+)/status/(\d+)", url)
                                 tweet_author = m.group(1) if m else ""
                                 tweet_id     = m.group(2) if m else ""
 
                                 add_log(f"Scraping replies to tweet {tweet_id} by @{tweet_author}…")
-                                # Search for replies: replies to the tweet are tweets
-                                # that start with "@tweet_author" and reference the tweet id
-                                # Scweet search supports conversation_id filter
                                 query = f"conversation_id:{tweet_id}" if tweet_id else url
-                                replies = sc.search(
-                                    query=query,
-                                    limit=500,
-                                    save=True,
-                                    filter_replies=False,
-                                )
-                                # Filter out the original tweet itself
-                                if tweet_id:
-                                    replies = [r for r in replies
-                                               if str(r.get("id", "")) != tweet_id
-                                               and str(r.get("tweet_id", "")) != tweet_id]
-                                add_log(f"Replies scraped: {len(replies)} for tweet {tweet_id}")
+                                replies = sc.search(query=query, limit=500, save=True, filter_replies=False)
+                                replies, total_raw, admins_removed = _filter_replies(replies, skip, tweet_id)
+                                note = f" ({admins_removed} verified skipped)" if admins_removed else ""
+                                add_log(f"Replies scraped: {len(replies)} for tweet {tweet_id}{note}")
                                 asyncio.run(tb.send_replies_to_telegram(replies, url, tweet_author))
+                                if admins_removed:
+                                    asyncio.run(tb.send_message(f"ℹ️ {admins_removed} verified/admin accounts were skipped."))
                             except Exception as e:
                                 add_log(f"Replies error: {e}")
                                 asyncio.run(tb.send_message(f"❌ Error scraping replies: {e}"))
                         threading.Thread(target=_run_replies, daemon=True).start()
 
-                # ── /mirror <source_tweet_url> <target_tweet_url> ────────────
+                # ── /mirror <source_url> <target_url> [--no-admins] ──────────
                 elif cmd == "/mirror":
-                    parts = args.strip().split()
+                    raw_mirror_args, skip_admins_mirror = _parse_no_admins(args)
+                    parts = raw_mirror_args.strip().split()
                     if len(parts) < 2:
                         await bot.send_message(chat_id=chat_id, text=(
-                            "Usage: /mirror <source_tweet_url> <target_tweet_url>\n\n"
+                            "Usage: /mirror <source_tweet_url> <target_tweet_url> [--no-admins]\n\n"
                             "Scrapes all replies from the SOURCE tweet, then posts each one "
                             "as a reply on the TARGET tweet (from your account).\n\n"
-                            "Example:\n"
-                            "/mirror https://x.com/someone/status/111 https://x.com/you/status/222\n\n"
+                            "Add --no-admins to skip verified/blue-tick accounts:\n"
+                            "/mirror <src> <tgt> --no-admins\n\n"
                             "Each posted comment will look like:\n"
                             "💬 @originaluser: their comment text\n\n"
                             "⚠️ Twitter rate-limits posting — large threads are posted slowly (1 every 8s)."
@@ -767,17 +808,18 @@ async def handle_telegram_commands():
                     else:
                         src_url    = parts[0]
                         target_url = parts[1]
+                        filter_note = " | skipping verified accounts" if skip_admins_mirror else ""
                         await bot.send_message(
                             chat_id=chat_id,
                             text=(
                                 f"🔁 Mirror started.\n"
                                 f"Source: {src_url}\n"
-                                f"Target: {target_url}\n\n"
+                                f"Target: {target_url}{filter_note}\n\n"
                                 f"Scraping replies from source… will post them one by one on the target tweet."
                             ),
                             disable_web_page_preview=True
                         )
-                        def _run_mirror(src=src_url, tgt=target_url):
+                        def _run_mirror(src=src_url, tgt=target_url, skip=skip_admins_mirror):
                             import re as _re
                             import sys as _sys
                             _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
@@ -804,10 +846,7 @@ async def handle_telegram_commands():
                             try:
                                 query   = f"conversation_id:{src_id}" if src_id else src
                                 replies = sc.search(query=query, limit=500, save=True, filter_replies=False)
-                                if src_id:
-                                    replies = [r for r in replies
-                                               if str(r.get("id", "")) != src_id
-                                               and str(r.get("tweet_id", "")) != src_id]
+                                replies, _, admins_removed = _filter_replies(replies, skip, src_id)
                             except Exception as exc:
                                 asyncio.run(tb.send_message(f"❌ Error scraping source tweet replies: {exc}"))
                                 return
@@ -819,8 +858,9 @@ async def handle_telegram_commands():
                                 ))
                                 return
 
+                            admin_note = f" ({admins_removed} verified skipped)" if admins_removed else ""
                             asyncio.run(tb.send_message(
-                                f"✅ Found {len(replies):,} replies. "
+                                f"✅ Found {len(replies):,} replies{admin_note}. "
                                 f"Now posting them on target tweet (1 every 8s to avoid rate limits)…"
                             ))
 
@@ -840,7 +880,6 @@ async def handle_telegram_commands():
                                 if not text:
                                     continue
 
-                                # Format: attribution + original text (Twitter max 280 chars)
                                 prefix  = f"💬 @{username}: "
                                 max_txt = 280 - len(prefix) - 3
                                 body    = text[:max_txt] + ("…" if len(text) > max_txt else "")
@@ -853,7 +892,6 @@ async def handle_telegram_commands():
                                 else:
                                     fail_count += 1
                                     add_log(f"Mirror: post failed (@{username}): {result['error']}")
-                                    # If we hit auth/rate errors early, abort
                                     if fail_count >= 3 and ok_count == 0:
                                         asyncio.run(tb.send_message(
                                             f"❌ Posting is failing (3 errors, 0 successes). Stopping.\n"
@@ -862,14 +900,13 @@ async def handle_telegram_commands():
                                         ))
                                         return
 
-                                # Progress update every 25 posts
                                 if (i + 1) % 25 == 0:
                                     asyncio.run(tb.send_message(
                                         f"🔁 Mirror progress: {i+1}/{len(replies)} — "
                                         f"✅ {ok_count} posted, ❌ {fail_count} failed"
                                     ))
 
-                                time.sleep(8)  # stay within Twitter's rate limits
+                                time.sleep(8)
 
                             asyncio.run(tb.send_message(
                                 f"🏁 Mirror complete!\n"
@@ -881,39 +918,43 @@ async def handle_telegram_commands():
 
                         threading.Thread(target=_run_mirror, daemon=True).start()
 
-                # ── /replyall <tweet_url> <reply_text> ──────────────────────
+                # ── /replyall <tweet_url> [--no-admins] <reply_text> ────────
                 elif cmd == "/replyall":
-                    parts = args.strip().split(None, 1)
+                    raw_ra_args, skip_admins_ra = _parse_no_admins(args)
+                    parts = raw_ra_args.strip().split(None, 1)
                     if len(parts) < 2:
                         await bot.send_message(chat_id=chat_id, text=(
-                            "Usage: /replyall <tweet_url> <reply_text>\n\n"
+                            "Usage: /replyall <tweet_url> [--no-admins] <reply_text>\n\n"
                             "Scrapes every reply under a tweet, then replies back to each commenter\n"
                             "using your 200 accounts (one account per commenter, rotating).\n\n"
-                            "Optional @mention prefix:\n"
+                            "Options:\n"
+                            "  --no-admins  skip verified/blue-tick accounts\n\n"
+                            "Optional @mention prefix in text:\n"
                             "/replyall <url> @username your text\n\n"
-                            "Example:\n"
-                            "/replyall https://x.com/user/status/123 Thanks for your comment! 🙌"
+                            "Examples:\n"
+                            "/replyall https://x.com/user/status/123 Thanks! 🙌\n"
+                            "/replyall https://x.com/user/status/123 --no-admins Thanks! 🙌"
                         ), disable_web_page_preview=True)
                     else:
                         ra_tweet_url = parts[0].strip()
                         ra_reply_body = parts[1].strip()
-                        # Optional @mention prefix
                         ra_parts = ra_reply_body.split(None, 1)
                         ra_mention = ""
                         if ra_parts[0].startswith("@"):
                             ra_mention = ra_parts[0]
                             ra_reply_body = ra_parts[1] if len(ra_parts) > 1 else ""
 
+                        filter_note = " | skipping verified accounts" if skip_admins_ra else ""
                         await bot.send_message(
                             chat_id=chat_id,
                             text=(
-                                f"🔍 Scraping replies for:\n{ra_tweet_url}\n\n"
+                                f"🔍 Scraping replies for:\n{ra_tweet_url}{filter_note}\n\n"
                                 f"Will then reply to each commenter using your 200 accounts."
                             ),
                             disable_web_page_preview=True
                         )
 
-                        def _run_replyall(url=ra_tweet_url, reply_text=ra_reply_body, mention=ra_mention):
+                        def _run_replyall(url=ra_tweet_url, reply_text=ra_reply_body, mention=ra_mention, skip=skip_admins_ra):
                             import re as _re
                             import sys as _sys
                             _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
@@ -937,10 +978,7 @@ async def handle_telegram_commands():
                             try:
                                 query   = f"conversation_id:{tweet_id}"
                                 replies = sc.search(query=query, limit=500, save=True, filter_replies=False)
-                                # Remove the original tweet itself
-                                replies = [r for r in replies
-                                           if str(r.get("id", "")) != tweet_id
-                                           and str(r.get("tweet_id", "")) != tweet_id]
+                                replies, _, admins_removed = _filter_replies(replies, skip, tweet_id)
                             except Exception as exc:
                                 asyncio.run(tb.send_message(f"❌ Error scraping replies: {exc}"))
                                 return
@@ -955,8 +993,9 @@ async def handle_telegram_commands():
                                 asyncio.run(tb.send_message("❌ Account pool empty. Check tools/cookies.json."))
                                 return
 
+                            admin_note = f" ({admins_removed} verified skipped)" if admins_removed else ""
                             asyncio.run(tb.send_message(
-                                f"✅ Found {len(replies):,} replies.\n"
+                                f"✅ Found {len(replies):,} replies{admin_note}.\n"
                                 f"Replying to each commenter using {len(pool)} accounts…\n"
                                 f"(~{len(replies)*5//60}–{len(replies)*8//60} min estimated)"
                             ))
