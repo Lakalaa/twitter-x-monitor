@@ -397,6 +397,9 @@ async def handle_telegram_commands():
                         "/replies <tweet_url> — scrape all replies to a tweet\n"
                         "/mirror <src_url> <tgt_url> — copy replies from one tweet onto another\n"
                         "/complaints topic — search complaint tweets\n"
+                        "/like <tweet_url> — like with all 200 accounts\n"
+                        "/comment <tweet_url> [@mention] <text> — comment with all 200 accounts\n"
+                        "/engage <tweet_url> [@mention] <text> — like + comment with all 200 accounts\n"
                         "/check — run all scheduled checks now\n"
                         "/status — monitoring status\n"
                         "/help — full command reference\n\n"
@@ -426,6 +429,16 @@ async def handle_telegram_commands():
                         "  as a comment on target tweet (from your account).\n"
                         "  Format: 💬 @originaluser: their comment\n"
                         "  Posts 1 reply every 8s (Twitter rate limit)\n\n"
+                        "── Bulk Engagement (200 accounts) ──\n"
+                        "/like <tweet_url>\n"
+                        "  Likes the tweet from all 200 accounts\n\n"
+                        "/comment <tweet_url> [@mention] <text>\n"
+                        "  Posts a comment from all 200 accounts\n"
+                        "  Optional: start with @username to mention someone\n"
+                        "  Example: /comment https://x.com/.../123 @elonmusk great!\n\n"
+                        "/engage <tweet_url> [@mention] <text>\n"
+                        "  Likes AND comments from all 200 accounts at once\n"
+                        "  Example: /engage https://x.com/.../123 Amazing project!\n\n"
                         "── Other ──\n"
                         "/complaints topic — complaint tweets (last 7 days)\n"
                         "/check — run all scheduled checks now\n"
@@ -860,6 +873,83 @@ async def handle_telegram_commands():
 
                         threading.Thread(target=_run_mirror, daemon=True).start()
 
+                # ── /like <tweet_url> ───────────────────────────────────────
+                elif cmd == "/like":
+                    if not args:
+                        await bot.send_message(chat_id=chat_id, text="Usage: /like <tweet_url>\nExample: /like https://x.com/user/status/123456789")
+                    else:
+                        tweet_url = args.split()[0]
+                        await bot.send_message(chat_id=chat_id, text=f"❤️ Liking tweet with all 200 accounts…\n{tweet_url}", disable_web_page_preview=True)
+                        def _run_like(url=tweet_url, cid=chat_id):
+                            from twitter_post import bulk_engage
+                            result = bulk_engage(url, action="like", delay_min=2.0, delay_max=6.0)
+                            if "error" in result:
+                                asyncio.run(tb.send_message(f"❌ Like failed: {result['error']}"))
+                            else:
+                                asyncio.run(tb.send_message(
+                                    f"❤️ Like complete!\n"
+                                    f"Tweet: {url}\n"
+                                    f"✅ {result['ok']} liked | ❌ {result['fail']} failed"
+                                ))
+                        threading.Thread(target=_run_like, daemon=True).start()
+
+                # ── /comment <tweet_url> <text> ──────────────────────────────
+                elif cmd == "/comment":
+                    parts = args.split(None, 1)
+                    if len(parts) < 2:
+                        await bot.send_message(chat_id=chat_id, text="Usage: /comment <tweet_url> <text>\nOptional @mention: /comment <url> @username your comment\nExample: /comment https://x.com/user/status/123 Great post!")
+                    else:
+                        tweet_url = parts[0]
+                        comment_body = parts[1]
+                        # If first word is a @mention, extract it
+                        cb_parts = comment_body.split(None, 1)
+                        mention_tag = ""
+                        if cb_parts[0].startswith("@"):
+                            mention_tag = cb_parts[0]
+                            comment_body = cb_parts[1] if len(cb_parts) > 1 else ""
+                        await bot.send_message(chat_id=chat_id, text=f"💬 Commenting on tweet with all 200 accounts…\n{tweet_url}", disable_web_page_preview=True)
+                        def _run_comment(url=tweet_url, text=comment_body, mention=mention_tag, cid=chat_id):
+                            from twitter_post import bulk_engage
+                            result = bulk_engage(url, action="comment", comment_text=text, mention=mention, delay_min=4.0, delay_max=10.0)
+                            if "error" in result:
+                                asyncio.run(tb.send_message(f"❌ Comment failed: {result['error']}"))
+                            else:
+                                asyncio.run(tb.send_message(
+                                    f"💬 Comment complete!\n"
+                                    f"Tweet: {url}\n"
+                                    f"Text: {mention+' ' if mention else ''}{text}\n"
+                                    f"✅ {result['ok']} posted | ❌ {result['fail']} failed"
+                                ))
+                        threading.Thread(target=_run_comment, daemon=True).start()
+
+                # ── /engage <tweet_url> <text> ───────────────────────────────
+                elif cmd == "/engage":
+                    parts = args.split(None, 1)
+                    if len(parts) < 2:
+                        await bot.send_message(chat_id=chat_id, text="Usage: /engage <tweet_url> <comment_text>\nLikes AND comments with all 200 accounts.\nExample: /engage https://x.com/user/status/123 Amazing project!")
+                    else:
+                        tweet_url = parts[0]
+                        comment_body = parts[1]
+                        cb_parts = comment_body.split(None, 1)
+                        mention_tag = ""
+                        if cb_parts[0].startswith("@"):
+                            mention_tag = cb_parts[0]
+                            comment_body = cb_parts[1] if len(cb_parts) > 1 else ""
+                        await bot.send_message(chat_id=chat_id, text=f"🚀 Engaging (like + comment) with all 200 accounts…\n{tweet_url}", disable_web_page_preview=True)
+                        def _run_engage(url=tweet_url, text=comment_body, mention=mention_tag, cid=chat_id):
+                            from twitter_post import bulk_engage
+                            result = bulk_engage(url, action="both", comment_text=text, mention=mention, delay_min=4.0, delay_max=10.0)
+                            if "error" in result:
+                                asyncio.run(tb.send_message(f"❌ Engage failed: {result['error']}"))
+                            else:
+                                asyncio.run(tb.send_message(
+                                    f"🚀 Engage complete!\n"
+                                    f"Tweet: {url}\n"
+                                    f"Text: {mention+' ' if mention else ''}{text}\n"
+                                    f"✅ {result['ok']} accounts | ❌ {result['fail']} failed"
+                                ))
+                        threading.Thread(target=_run_engage, daemon=True).start()
+
                 # ── /complaints <query> ──────────────────────────────────────
                 elif cmd == "/complaints":
                     if not args:
@@ -1064,6 +1154,83 @@ def api_account_pool():
         "cooldown_count": in_cooldown,
         "accounts": accounts,
     })
+
+
+@app.route("/api/engage", methods=["POST"])
+def api_engage():
+    """
+    Trigger bulk engagement on a tweet.
+    Body: { "tweet_url": "...", "action": "like|comment|both",
+            "comment_text": "...", "mention": "@user" }
+    Runs in a background thread; returns immediately with a job ID.
+    """
+    data = request.json or {}
+    tweet_url    = data.get("tweet_url", "").strip()
+    action       = data.get("action", "like").strip()
+    comment_text = data.get("comment_text", "").strip()
+    mention      = data.get("mention", "").strip()
+
+    if not tweet_url:
+        return jsonify({"ok": False, "error": "tweet_url is required"}), 400
+    if action not in ("like", "comment", "both"):
+        return jsonify({"ok": False, "error": "action must be like, comment, or both"}), 400
+    if action in ("comment", "both") and not comment_text and not mention:
+        return jsonify({"ok": False, "error": "comment_text or mention is required for comment/both"}), 400
+
+    import uuid
+    job_id = uuid.uuid4().hex[:8]
+
+    # Store progress in STATE
+    STATE.setdefault("engage_jobs", {})[job_id] = {
+        "tweet_url": tweet_url, "action": action,
+        "status": "running", "done": 0, "total": 0,
+        "ok": 0, "fail": 0, "started_at": datetime.now().isoformat(),
+        "finished_at": None,
+    }
+
+    def _run(jid=job_id, url=tweet_url, act=action, text=comment_text, tag=mention):
+        from twitter_post import bulk_engage
+        job = STATE["engage_jobs"][jid]
+        pool = []
+        cookies_file = "tools/cookies.json"
+        if os.path.exists(cookies_file):
+            try:
+                with open(cookies_file) as f:
+                    pool = json.load(f)
+            except Exception:
+                pass
+        job["total"] = len(pool)
+
+        def progress(done, total, username, status_str):
+            job["done"] = done
+            job["total"] = total
+            job["ok"]   = sum(1 for r in job.get("results", []) if r.get("ok"))
+            job["fail"] = done - job["ok"]
+
+        job["results"] = []
+        result = bulk_engage(url, action=act, comment_text=text, mention=tag,
+                             delay_min=3.0, delay_max=8.0, progress_cb=progress)
+        job.update({
+            "status": "done",
+            "ok": result.get("ok", 0),
+            "fail": result.get("fail", 0),
+            "total": result.get("total", 0),
+            "done": result.get("total", 0),
+            "finished_at": datetime.now().isoformat(),
+            "error": result.get("error", ""),
+        })
+        add_log(f"Engage job {jid}: {act} on {url} — ✅{result.get('ok',0)} ❌{result.get('fail',0)}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/engage/<job_id>")
+def api_engage_status(job_id):
+    job = STATE.get("engage_jobs", {}).get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
 
 
 @app.route("/api/cache-status")
