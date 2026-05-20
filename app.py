@@ -384,6 +384,21 @@ def _parse_no_admins(args: str) -> tuple:
     return args.strip(), False
 
 
+def _parse_count(args: str) -> tuple:
+    """
+    Extract an optional account count from args.
+    The count must be the second whitespace-separated token and must be
+    a plain integer (e.g. '/like <url> 50 ...' → count=50).
+    Returns (cleaned_args_without_count, count_or_None).
+    """
+    tokens = args.split(None, 2)
+    if len(tokens) >= 2 and tokens[1].isdigit():
+        rest = tokens[2] if len(tokens) > 2 else ""
+        cleaned = (tokens[0] + (" " + rest if rest else "")).strip()
+        return cleaned, int(tokens[1])
+    return args, None
+
+
 # ─── Telegram Bot command handler ─────────────────────────────────────────────
 
 async def handle_telegram_commands():
@@ -443,7 +458,8 @@ async def handle_telegram_commands():
                         "/compare username — mutuals / followers-only / following-only\n"
                         "/replies <tweet_url> [--no-admins] — scrape replies (skip verified with flag)\n"
                         "/mirror <src> <tgt> [--no-admins] — copy replies to another tweet\n"
-                        "/replyall <tweet_url> [--no-admins] <text> — reply to every commenter\n"
+                        "/replyall <tweet_url> [count] [--no-admins] <text> — reply to every commenter\n"
+                        "/tag <src> <tgt> [count] [--no-admins] — tag repliers 5 per tweet under target\n"
                         "/complaints topic — search complaint tweets\n"
                         "/like <tweet_url> — like with all 200 accounts\n"
                         "/comment <tweet_url> [@mention] <text> — comment with all 200 accounts\n"
@@ -479,21 +495,28 @@ async def handle_telegram_commands():
                         "  Format: 💬 @originaluser: their comment\n"
                         "  Add --no-admins to skip verified accounts\n"
                         "  Posts 1 reply every 8s (Twitter rate limit)\n\n"
-                        "/replyall <tweet_url> [--no-admins] [@mention] <text>\n"
+                        "/replyall <tweet_url> [count] [--no-admins] [@mention] <text>\n"
                         "  Scrapes every reply under a tweet, then replies back\n"
-                        "  to each commenter using your 200 accounts (rotating).\n"
-                        "  One account replies to one commenter, then next account, etc.\n"
-                        "  Add --no-admins to skip verified accounts.\n"
-                        "  Example: /replyall https://x.com/.../123 Thanks! 🙌\n"
-                        "  Example (skip verified): /replyall https://x.com/.../123 --no-admins Thanks!\n\n"
-                        "── Bulk Engagement (200 accounts) ──\n"
-                        "/like <tweet_url>\n"
-                        "  Likes the tweet from all 200 accounts\n\n"
-                        "/comment <tweet_url> [@mention] <text>\n"
-                        "  Posts a comment from all 200 accounts\n"
-                        "  Optional: start with @username to mention someone\n"
-                        "  Example: /comment https://x.com/.../123 @elonmusk great!\n\n"
-                        "/engage <tweet_url> [@mention] <text>\n"
+                        "  to each commenter using your accounts (rotating).\n"
+                        "  count = how many accounts to use (default: all)\n"
+                        "  --no-admins = skip verified/blue-tick accounts\n"
+                        "  Example: /replyall https://x.com/.../123 50 Thanks! 🙌\n\n"
+                        "/tag <source_url> <target_url> [count] [--no-admins]\n"
+                        "  Scrapes all repliers from SOURCE tweet, collects unique\n"
+                        "  usernames, then tags them 5 at a time as replies on TARGET.\n"
+                        "  count = max users to tag total\n"
+                        "  --no-admins = skip verified accounts\n"
+                        "  Each posted reply: @user1 @user2 @user3 @user4 @user5\n"
+                        "  Posts 1 reply every 8s (Twitter rate limit)\n"
+                        "  Example: /tag https://x.com/src/111 https://x.com/tgt/222 50\n\n"
+                        "── Bulk Engagement (account pool) ──\n"
+                        "/like <tweet_url> [count]\n"
+                        "  Likes the tweet — count limits how many accounts (default: all)\n\n"
+                        "/comment <tweet_url> [count] [@mention] <text>\n"
+                        "  Posts a comment — count limits how many accounts (default: all)\n"
+                        "  Optional: start text with @username to mention someone\n"
+                        "  Example: /comment https://x.com/.../123 50 @elonmusk great!\n\n"
+                        "/engage <tweet_url> [count] [@mention] <text>\n"
                         "  Likes AND comments from all 200 accounts at once\n"
                         "  Example: /engage https://x.com/.../123 Amazing project!\n\n"
                         "── Other ──\n"
@@ -918,22 +941,23 @@ async def handle_telegram_commands():
 
                         threading.Thread(target=_run_mirror, daemon=True).start()
 
-                # ── /replyall <tweet_url> [--no-admins] <reply_text> ────────
+                # ── /replyall <tweet_url> [count] [--no-admins] <reply_text> ─
                 elif cmd == "/replyall":
                     raw_ra_args, skip_admins_ra = _parse_no_admins(args)
+                    raw_ra_args, ra_count = _parse_count(raw_ra_args)
                     parts = raw_ra_args.strip().split(None, 1)
                     if len(parts) < 2:
                         await bot.send_message(chat_id=chat_id, text=(
-                            "Usage: /replyall <tweet_url> [--no-admins] <reply_text>\n\n"
+                            "Usage: /replyall <tweet_url> [count] [--no-admins] <reply_text>\n\n"
                             "Scrapes every reply under a tweet, then replies back to each commenter\n"
-                            "using your 200 accounts (one account per commenter, rotating).\n\n"
+                            "using your accounts (one per commenter, rotating).\n\n"
                             "Options:\n"
+                            "  count        how many accounts to use (default: all)\n"
                             "  --no-admins  skip verified/blue-tick accounts\n\n"
-                            "Optional @mention prefix in text:\n"
-                            "/replyall <url> @username your text\n\n"
                             "Examples:\n"
                             "/replyall https://x.com/user/status/123 Thanks! 🙌\n"
-                            "/replyall https://x.com/user/status/123 --no-admins Thanks! 🙌"
+                            "/replyall https://x.com/user/status/123 50 Thanks! 🙌\n"
+                            "/replyall https://x.com/user/status/123 50 --no-admins Thanks! 🙌"
                         ), disable_web_page_preview=True)
                     else:
                         ra_tweet_url = parts[0].strip()
@@ -945,16 +969,17 @@ async def handle_telegram_commands():
                             ra_reply_body = ra_parts[1] if len(ra_parts) > 1 else ""
 
                         filter_note = " | skipping verified accounts" if skip_admins_ra else ""
+                        count_note  = f" | using {ra_count} accounts" if ra_count else ""
                         await bot.send_message(
                             chat_id=chat_id,
                             text=(
-                                f"🔍 Scraping replies for:\n{ra_tweet_url}{filter_note}\n\n"
-                                f"Will then reply to each commenter using your 200 accounts."
+                                f"🔍 Scraping replies for:\n{ra_tweet_url}{filter_note}{count_note}\n\n"
+                                f"Will then reply to each commenter using your accounts."
                             ),
                             disable_web_page_preview=True
                         )
 
-                        def _run_replyall(url=ra_tweet_url, reply_text=ra_reply_body, mention=ra_mention, skip=skip_admins_ra):
+                        def _run_replyall(url=ra_tweet_url, reply_text=ra_reply_body, mention=ra_mention, skip=skip_admins_ra, n=ra_count):
                             import re as _re
                             import sys as _sys
                             _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
@@ -989,6 +1014,7 @@ async def handle_telegram_commands():
 
                             # ── 2. Load account pool ──────────────────────────
                             pool = _tp.load_account_pool()
+                            if n: pool = pool[:n]
                             if not pool:
                                 asyncio.run(tb.send_message("❌ Account pool empty. Check tools/cookies.json."))
                                 return
@@ -1064,44 +1090,216 @@ async def handle_telegram_commands():
 
                         threading.Thread(target=_run_replyall, daemon=True).start()
 
+                # ── /tag <source_url> <target_url> [count] [--no-admins] ───
+                elif cmd == "/tag":
+                    raw_tag_args, skip_admins_tag = _parse_no_admins(args)
+                    raw_tag_args, tag_count = _parse_count(raw_tag_args)
+                    tag_parts = raw_tag_args.strip().split()
+                    if len(tag_parts) < 2:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /tag <source_url> <target_url> [count] [--no-admins]\n\n"
+                            "Scrapes all repliers from SOURCE tweet, then mentions them\n"
+                            "in groups of 5 as replies on TARGET tweet.\n"
+                            "Each reply looks like: @user1 @user2 @user3 @user4 @user5\n\n"
+                            "Options:\n"
+                            "  count        max users to tag total (default: all)\n"
+                            "  --no-admins  skip verified/blue-tick accounts\n\n"
+                            "Examples:\n"
+                            "/tag https://x.com/a/status/111 https://x.com/b/status/222\n"
+                            "/tag https://x.com/a/status/111 https://x.com/b/status/222 50\n"
+                            "/tag https://x.com/a/status/111 https://x.com/b/status/222 50 --no-admins"
+                        ), disable_web_page_preview=True)
+                    else:
+                        tag_src_url = tag_parts[0]
+                        tag_tgt_url = tag_parts[1]
+                        filter_note = " | skip verified" if skip_admins_tag else ""
+                        count_note  = f" | max {tag_count} users" if tag_count else ""
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=(
+                                f"🏷 Tag started.\n"
+                                f"Source: {tag_src_url}\n"
+                                f"Target: {tag_tgt_url}{filter_note}{count_note}\n\n"
+                                f"Scraping repliers… will tag them 5 per tweet."
+                            ),
+                            disable_web_page_preview=True
+                        )
+
+                        def _run_tag(src=tag_src_url, tgt=tag_tgt_url, skip=skip_admins_tag, max_users=tag_count):
+                            import re as _re
+                            import sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                            import twitter_post as _tp
+
+                            # ── 1. Resolve target tweet ID ────────────────────
+                            m_tgt = _re.search(r"(?:x|twitter)\.com/[^/]+/status/(\d+)", tgt)
+                            if not m_tgt:
+                                asyncio.run(tb.send_message(f"❌ Could not parse target tweet ID from:\n{tgt}"))
+                                return
+                            target_id = m_tgt.group(1)
+
+                            m_src = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", src)
+                            src_id = m_src.group(2) if m_src else ""
+
+                            # ── 2. Scrape replies from source ─────────────────
+                            sc = get_scraper()
+                            if not sc:
+                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in Settings tab."))
+                                return
+
+                            add_log(f"Tag: scraping replies from tweet {src_id}…")
+                            try:
+                                query   = f"conversation_id:{src_id}" if src_id else src
+                                replies = sc.search(query=query, limit=500, save=True, filter_replies=False)
+                                replies, _, admins_removed = _filter_replies(replies, skip, src_id)
+                            except Exception as exc:
+                                asyncio.run(tb.send_message(f"❌ Error scraping source tweet: {exc}"))
+                                return
+
+                            # ── 3. Collect unique usernames ───────────────────
+                            seen = set()
+                            usernames = []
+                            for r in replies:
+                                u = (r.get("user", {}).get("screen_name") or r.get("username", "")).strip()
+                                if u and u.lower() not in seen:
+                                    seen.add(u.lower())
+                                    usernames.append(u)
+
+                            if max_users:
+                                usernames = usernames[:max_users]
+
+                            if not usernames:
+                                asyncio.run(tb.send_message("⚠️ No users found to tag."))
+                                return
+
+                            batches = [usernames[i:i+5] for i in range(0, len(usernames), 5)]
+                            admin_note = f" ({admins_removed} verified skipped)" if admins_removed else ""
+                            asyncio.run(tb.send_message(
+                                f"✅ {len(usernames)} unique users{admin_note} → "
+                                f"{len(batches)} batches of 5.\n"
+                                f"Posting tag replies on target tweet…"
+                            ))
+
+                            # ── 4. Load account pool ──────────────────────────
+                            pool = _tp.load_account_pool()
+                            if not pool:
+                                asyncio.run(tb.send_message("❌ Account pool empty. Check tools/cookies.json."))
+                                return
+
+                            auth_token, ct0 = _tp.get_auth_from_config()
+                            if not auth_token or not ct0:
+                                asyncio.run(tb.send_message("❌ ct0 missing. Add both auth_token AND ct0 in Settings."))
+                                return
+
+                            # ── 5. Post each batch of 5 mentions ─────────────
+                            ok_count   = 0
+                            fail_count = 0
+                            pool_idx   = 0
+
+                            for i, batch in enumerate(batches):
+                                post_text = " ".join(f"@{u}" for u in batch)
+
+                                # Rotate accounts
+                                account  = pool[pool_idx % len(pool)]
+                                pool_idx += 1
+                                auth_tok = account.get("cookies", {}).get("auth_token", "") or auth_token
+                                ct0_val  = account.get("cookies", {}).get("ct0", "")        or ct0
+                                acct_name = account.get("username", f"acct_{pool_idx}")
+
+                                result = _tp.post_reply(post_text, target_id, auth_tok, ct0_val)
+                                if result.get("ok"):
+                                    ok_count += 1
+                                    add_log(f"Tag: ✅ batch {i+1} posted via @{acct_name}: {post_text[:60]}")
+                                else:
+                                    fail_count += 1
+                                    add_log(f"Tag: ❌ batch {i+1} failed: {result.get('error','?')}")
+                                    if fail_count >= 3 and ok_count == 0:
+                                        asyncio.run(tb.send_message(
+                                            f"❌ Tag posting is failing (3 errors, 0 successes). Stopping.\n"
+                                            f"Last error: {result.get('error','?')}\n"
+                                            f"Check your ct0 cookie in Settings."
+                                        ))
+                                        return
+
+                                if (i + 1) % 20 == 0:
+                                    asyncio.run(tb.send_message(
+                                        f"🏷 Tag progress: {i+1}/{len(batches)} batches\n"
+                                        f"✅ {ok_count} posted | ❌ {fail_count} failed"
+                                    ))
+
+                                time.sleep(8)
+
+                            asyncio.run(tb.send_message(
+                                f"🏁 Tag complete!\n"
+                                f"Users tagged: {len(usernames)}\n"
+                                f"Batches: {len(batches)} (5 per tweet)\n"
+                                f"✅ {ok_count} posted | ❌ {fail_count} failed"
+                            ))
+                            add_log(f"Tag done: {ok_count} batches posted, {fail_count} failed")
+
+                        threading.Thread(target=_run_tag, daemon=True).start()
+
                 # ── /like <tweet_url> ───────────────────────────────────────
                 elif cmd == "/like":
                     if not args:
-                        await bot.send_message(chat_id=chat_id, text="Usage: /like <tweet_url>\nExample: /like https://x.com/user/status/123456789")
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /like <tweet_url> [count]\n"
+                            "  count — optional: how many accounts to use (default: all)\n\n"
+                            "Examples:\n"
+                            "/like https://x.com/user/status/123\n"
+                            "/like https://x.com/user/status/123 50"
+                        ))
                     else:
-                        tweet_url = args.split()[0]
-                        await bot.send_message(chat_id=chat_id, text=f"❤️ Liking tweet with all 200 accounts…\n{tweet_url}", disable_web_page_preview=True)
-                        def _run_like(url=tweet_url, cid=chat_id):
-                            from twitter_post import bulk_engage
-                            result = bulk_engage(url, action="like", delay_min=2.0, delay_max=6.0)
+                        like_args, like_count = _parse_count(args)
+                        tweet_url = like_args.split()[0]
+                        count_note = f" ({like_count} accounts)" if like_count else " (all accounts)"
+                        await bot.send_message(chat_id=chat_id, text=f"❤️ Liking tweet{count_note}…\n{tweet_url}", disable_web_page_preview=True)
+                        def _run_like(url=tweet_url, n=like_count, cid=chat_id):
+                            import sys as _sys; _sys.path.insert(0, "tools")
+                            from twitter_post import bulk_engage, load_account_pool
+                            pool = load_account_pool()
+                            if n: pool = pool[:n]
+                            result = bulk_engage(url, action="like", accounts=pool, delay_min=2.0, delay_max=6.0)
                             if "error" in result:
                                 asyncio.run(tb.send_message(f"❌ Like failed: {result['error']}"))
                             else:
                                 asyncio.run(tb.send_message(
                                     f"❤️ Like complete!\n"
                                     f"Tweet: {url}\n"
+                                    f"Accounts used: {result['total']}\n"
                                     f"✅ {result['ok']} liked | ❌ {result['fail']} failed"
                                 ))
                         threading.Thread(target=_run_like, daemon=True).start()
 
-                # ── /comment <tweet_url> <text> ──────────────────────────────
+                # ── /comment <tweet_url> [count] <text> ──────────────────────
                 elif cmd == "/comment":
-                    parts = args.split(None, 1)
+                    cmt_args, cmt_count = _parse_count(args)
+                    parts = cmt_args.split(None, 1)
                     if len(parts) < 2:
-                        await bot.send_message(chat_id=chat_id, text="Usage: /comment <tweet_url> <text>\nOptional @mention: /comment <url> @username your comment\nExample: /comment https://x.com/user/status/123 Great post!")
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /comment <tweet_url> [count] <text>\n"
+                            "  count — optional: how many accounts to use (default: all)\n\n"
+                            "Examples:\n"
+                            "/comment https://x.com/user/status/123 Great post!\n"
+                            "/comment https://x.com/user/status/123 50 Great post!\n"
+                            "/comment https://x.com/user/status/123 50 @elonmusk check this!"
+                        ))
                     else:
                         tweet_url = parts[0]
                         comment_body = parts[1]
-                        # If first word is a @mention, extract it
                         cb_parts = comment_body.split(None, 1)
                         mention_tag = ""
                         if cb_parts[0].startswith("@"):
                             mention_tag = cb_parts[0]
                             comment_body = cb_parts[1] if len(cb_parts) > 1 else ""
-                        await bot.send_message(chat_id=chat_id, text=f"💬 Commenting on tweet with all 200 accounts…\n{tweet_url}", disable_web_page_preview=True)
-                        def _run_comment(url=tweet_url, text=comment_body, mention=mention_tag, cid=chat_id):
-                            from twitter_post import bulk_engage
-                            result = bulk_engage(url, action="comment", comment_text=text, mention=mention, delay_min=4.0, delay_max=10.0)
+                        count_note = f" ({cmt_count} accounts)" if cmt_count else " (all accounts)"
+                        await bot.send_message(chat_id=chat_id, text=f"💬 Commenting on tweet{count_note}…\n{tweet_url}", disable_web_page_preview=True)
+                        def _run_comment(url=tweet_url, text=comment_body, mention=mention_tag, n=cmt_count):
+                            import sys as _sys; _sys.path.insert(0, "tools")
+                            from twitter_post import bulk_engage, load_account_pool
+                            pool = load_account_pool()
+                            if n: pool = pool[:n]
+                            result = bulk_engage(url, action="comment", comment_text=text, mention=mention, accounts=pool, delay_min=4.0, delay_max=10.0)
                             if "error" in result:
                                 asyncio.run(tb.send_message(f"❌ Comment failed: {result['error']}"))
                             else:
@@ -1109,15 +1307,24 @@ async def handle_telegram_commands():
                                     f"💬 Comment complete!\n"
                                     f"Tweet: {url}\n"
                                     f"Text: {mention+' ' if mention else ''}{text}\n"
+                                    f"Accounts used: {result['total']}\n"
                                     f"✅ {result['ok']} posted | ❌ {result['fail']} failed"
                                 ))
                         threading.Thread(target=_run_comment, daemon=True).start()
 
-                # ── /engage <tweet_url> <text> ───────────────────────────────
+                # ── /engage <tweet_url> [count] <text> ───────────────────────
                 elif cmd == "/engage":
-                    parts = args.split(None, 1)
+                    eng_args, eng_count = _parse_count(args)
+                    parts = eng_args.split(None, 1)
                     if len(parts) < 2:
-                        await bot.send_message(chat_id=chat_id, text="Usage: /engage <tweet_url> <comment_text>\nLikes AND comments with all 200 accounts.\nExample: /engage https://x.com/user/status/123 Amazing project!")
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /engage <tweet_url> [count] <comment_text>\n"
+                            "  count — optional: how many accounts to use (default: all)\n"
+                            "Likes AND comments with the specified accounts.\n\n"
+                            "Examples:\n"
+                            "/engage https://x.com/user/status/123 Amazing project!\n"
+                            "/engage https://x.com/user/status/123 50 Amazing project!"
+                        ))
                     else:
                         tweet_url = parts[0]
                         comment_body = parts[1]
@@ -1126,10 +1333,14 @@ async def handle_telegram_commands():
                         if cb_parts[0].startswith("@"):
                             mention_tag = cb_parts[0]
                             comment_body = cb_parts[1] if len(cb_parts) > 1 else ""
-                        await bot.send_message(chat_id=chat_id, text=f"🚀 Engaging (like + comment) with all 200 accounts…\n{tweet_url}", disable_web_page_preview=True)
-                        def _run_engage(url=tweet_url, text=comment_body, mention=mention_tag, cid=chat_id):
-                            from twitter_post import bulk_engage
-                            result = bulk_engage(url, action="both", comment_text=text, mention=mention, delay_min=4.0, delay_max=10.0)
+                        count_note = f" ({eng_count} accounts)" if eng_count else " (all accounts)"
+                        await bot.send_message(chat_id=chat_id, text=f"🚀 Engaging (like + comment){count_note}…\n{tweet_url}", disable_web_page_preview=True)
+                        def _run_engage(url=tweet_url, text=comment_body, mention=mention_tag, n=eng_count):
+                            import sys as _sys; _sys.path.insert(0, "tools")
+                            from twitter_post import bulk_engage, load_account_pool
+                            pool = load_account_pool()
+                            if n: pool = pool[:n]
+                            result = bulk_engage(url, action="both", comment_text=text, mention=mention, accounts=pool, delay_min=4.0, delay_max=10.0)
                             if "error" in result:
                                 asyncio.run(tb.send_message(f"❌ Engage failed: {result['error']}"))
                             else:
@@ -1137,6 +1348,7 @@ async def handle_telegram_commands():
                                     f"🚀 Engage complete!\n"
                                     f"Tweet: {url}\n"
                                     f"Text: {mention+' ' if mention else ''}{text}\n"
+                                    f"Accounts used: {result['total']}\n"
                                     f"✅ {result['ok']} accounts | ❌ {result['fail']} failed"
                                 ))
                         threading.Thread(target=_run_engage, daemon=True).start()
