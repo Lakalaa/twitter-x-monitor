@@ -304,24 +304,30 @@
 
   <!-- ENGAGE -->
   <div class="panel" id="tab-engage">
+
+    <!-- BULK ENGAGEMENT -->
     <div class="card">
       <h2>🚀 Bulk Engagement</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:20px">
-        Use all <strong style="color:#fff">200 accounts</strong> to like, comment, or both on any tweet.
-        Accounts act one after another with a random 3–8 second delay between each.
+        Like, comment, or both on any tweet using your account pool.
+        Leave <strong>Account Count</strong> blank to use all accounts.
       </p>
-
       <div style="display:flex;flex-direction:column;gap:14px">
-
-        <div>
-          <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL</label>
-          <input id="eng-tweet-url" type="text" placeholder="https://x.com/user/status/123456789"
-            style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL</label>
+            <input id="eng-tweet-url" type="text" placeholder="https://x.com/user/status/123456789"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 130px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Account Count <span style="color:#6b7280">(optional)</span></label>
+            <input id="eng-count" type="number" min="1" max="200" placeholder="all"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
         </div>
-
         <div>
           <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Action</label>
-          <div style="display:flex;gap:10px">
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:#d1d5db">
               <input type="radio" name="eng-action" value="like" checked style="accent-color:#3b82f6"> ❤️ Like only
             </label>
@@ -333,36 +339,31 @@
             </label>
           </div>
         </div>
-
         <div id="eng-comment-fields">
-          <div style="display:flex;gap:10px">
-            <div style="flex:0 0 200px">
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div style="flex:0 0 180px">
               <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">@Mention (optional)</label>
               <input id="eng-mention" type="text" placeholder="@username"
                 style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
             </div>
-            <div style="flex:1">
+            <div style="flex:1;min-width:200px">
               <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Comment text</label>
               <input id="eng-comment" type="text" placeholder="Great post! 🔥"
                 style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
             </div>
           </div>
         </div>
-
         <button onclick="startEngage()" id="eng-btn"
           style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:15px;font-weight:600;cursor:pointer;align-self:flex-start">
           🚀 Start Engagement
         </button>
       </div>
     </div>
-
-    <!-- Progress card (hidden until job starts) -->
     <div class="card" id="eng-progress-card" style="display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <h2 style="margin:0">Progress</h2>
+        <h2 style="margin:0">Engagement Progress</h2>
         <span id="eng-status-badge" style="font-size:13px;padding:4px 12px;border-radius:20px;background:#1e40af;color:#93c5fd">Running…</span>
       </div>
-
       <div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;font-size:13px;color:#9ca3af;margin-bottom:6px">
           <span id="eng-progress-label">0 / 0 accounts</span>
@@ -372,9 +373,144 @@
           <div id="eng-progress-bar" style="height:100%;background:#3b82f6;width:0%;transition:width 0.4s"></div>
         </div>
       </div>
-
       <div id="eng-summary" style="font-size:13px;color:#6b7280"></div>
     </div>
+
+    <!-- REPLY ALL -->
+    <div class="card">
+      <h2>↩️ Reply All</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:16px">
+        Scrape all repliers from a tweet, then reply to each one using your account pool (one account per person, rotating).
+      </p>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL to scrape replies from</label>
+            <input id="ra-tweet-url" type="text" placeholder="https://x.com/user/status/123456789"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 130px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Account Count <span style="color:#6b7280">(optional)</span></label>
+            <input id="ra-count" type="number" min="1" max="200" placeholder="all"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="flex:0 0 180px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">@Mention (optional)</label>
+            <input id="ra-mention" type="text" placeholder="@username"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Reply text</label>
+            <input id="ra-text" type="text" placeholder="Thanks for commenting! 🙌"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;color:#d1d5db;margin-top:0">
+          <input type="checkbox" id="ra-no-admins" style="accent-color:#3b82f6;width:16px;height:16px">
+          Skip verified / blue-tick accounts
+        </label>
+        <button onclick="startReplyAll()" id="ra-btn"
+          style="background:#8b5cf6;color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:15px;font-weight:600;cursor:pointer;align-self:flex-start">
+          ↩️ Start Reply All
+        </button>
+      </div>
+    </div>
+    <div class="card" id="ra-progress-card" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="margin:0">Reply All Progress</h2>
+        <span id="ra-status-badge" style="font-size:13px;padding:4px 12px;border-radius:20px;background:#4c1d95;color:#c4b5fd">Running…</span>
+      </div>
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:#9ca3af;margin-bottom:6px">
+          <span id="ra-progress-label">0 / 0 replies</span>
+          <span id="ra-ok-fail">✅ 0 &nbsp; ❌ 0</span>
+        </div>
+        <div style="background:#1f2937;border-radius:6px;height:10px;overflow:hidden">
+          <div id="ra-progress-bar" style="height:100%;background:#8b5cf6;width:0%;transition:width 0.4s"></div>
+        </div>
+      </div>
+      <div id="ra-summary" style="font-size:13px;color:#6b7280"></div>
+    </div>
+
+    <!-- SCRAPE & TAG USERS -->
+    <div class="card">
+      <h2>🏷 Scrape &amp; Tag Users</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:16px">
+        Two-step: <strong style="color:#fff">Step 1</strong> scrapes all repliers from a tweet and saves them.
+        <strong style="color:#fff">Step 2</strong> tags them 5 at a time under any post you choose.
+      </p>
+
+      <!-- Step 1 -->
+      <div style="background:#0a0c12;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-bottom:14px">
+        <div style="font-size:13px;font-weight:600;color:#60a5fa;margin-bottom:12px">Step 1 — Scrape &amp; Save Users</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL to scrape repliers from</label>
+            <input id="sc-tweet-url" type="text" placeholder="https://x.com/user/status/123456789"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 auto">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#d1d5db;margin-bottom:10px">
+              <input type="checkbox" id="sc-no-admins" style="accent-color:#3b82f6;width:15px;height:15px">
+              Skip verified
+            </label>
+            <button onclick="startScrape()" id="sc-btn"
+              style="background:#0ea5e9;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap">
+              🔍 Scrape &amp; Save
+            </button>
+          </div>
+        </div>
+        <div id="sc-status" style="margin-top:12px;font-size:13px;color:#6b7280;display:none"></div>
+        <div id="sc-saved-info" style="margin-top:8px;font-size:13px;color:#6ee7b7;display:none"></div>
+      </div>
+
+      <!-- Step 2 -->
+      <div style="background:#0a0c12;border:1px solid #2a2d3a;border-radius:10px;padding:16px">
+        <div style="font-size:13px;font-weight:600;color:#34d399;margin-bottom:12px">Step 2 — Tag Saved Users Under a Post</div>
+        <div id="tu-saved-preview" style="font-size:13px;color:#6b7280;margin-bottom:12px">Loading saved users…</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Target tweet URL (where to post @mentions)</label>
+            <input id="tu-target-url" type="text" placeholder="https://x.com/yourprofile/status/999"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 120px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Max users <span style="color:#6b7280">(optional)</span></label>
+            <input id="tu-count" type="number" min="1" placeholder="all"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 auto">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#d1d5db;margin-bottom:10px">
+              <input type="checkbox" id="tu-no-admins" style="accent-color:#3b82f6;width:15px;height:15px">
+              Skip verified
+            </label>
+            <button onclick="startTagUsers()" id="tu-btn"
+              style="background:#22c55e;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap">
+              🏷 Tag Users
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="tu-progress-card" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="margin:0">Tag Users Progress</h2>
+        <span id="tu-status-badge" style="font-size:13px;padding:4px 12px;border-radius:20px;background:#14532d;color:#86efac">Running…</span>
+      </div>
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:#9ca3af;margin-bottom:6px">
+          <span id="tu-progress-label">0 / 0 batches</span>
+          <span id="tu-ok-fail">✅ 0 &nbsp; ❌ 0</span>
+        </div>
+        <div style="background:#1f2937;border-radius:6px;height:10px;overflow:hidden">
+          <div id="tu-progress-bar" style="height:100%;background:#22c55e;width:0%;transition:width 0.4s"></div>
+        </div>
+      </div>
+      <div id="tu-summary" style="font-size:13px;color:#6b7280"></div>
+    </div>
+
   </div>
 
   <!-- BOT COMMANDS -->
@@ -452,6 +588,7 @@ async function startEngage() {
   const action  = document.querySelector('input[name="eng-action"]:checked').value;
   const comment = document.getElementById('eng-comment').value.trim();
   const mention = document.getElementById('eng-mention').value.trim();
+  const count   = document.getElementById('eng-count').value.trim();
 
   if (!url) { alert('Please enter a tweet URL'); return; }
   if (action !== 'like' && !comment && !mention) { alert('Please enter a comment or @mention'); return; }
@@ -461,6 +598,7 @@ async function startEngage() {
   btn.textContent = '⏳ Starting…';
 
   const body = { tweet_url: url, action, comment_text: comment, mention };
+  if (count) body.count = parseInt(count);
   const res = await fetch('/api/engage', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(body)
@@ -508,6 +646,188 @@ async function pollEngageJob() {
     const btn = document.getElementById('eng-btn');
     btn.disabled = false;
     btn.textContent = '🚀 Start Engagement';
+  }
+}
+
+// ── Reply All ─────────────────────────────────────────────────────────────────
+let raJobId = null, raPollInterval = null;
+
+async function startReplyAll() {
+  const url      = document.getElementById('ra-tweet-url').value.trim();
+  const text     = document.getElementById('ra-text').value.trim();
+  const mention  = document.getElementById('ra-mention').value.trim();
+  const count    = document.getElementById('ra-count').value.trim();
+  const noAdmins = document.getElementById('ra-no-admins').checked;
+
+  if (!url) { alert('Please enter a tweet URL'); return; }
+  if (!text && !mention) { alert('Please enter reply text or a @mention'); return; }
+
+  const btn = document.getElementById('ra-btn');
+  btn.disabled = true; btn.textContent = '⏳ Starting…';
+
+  const body = { tweet_url: url, reply_text: text, mention, no_admins: noAdmins };
+  if (count) body.count = parseInt(count);
+  const res = await fetch('/api/replyall', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
+
+  if (!res.ok) {
+    alert('Error: ' + (res.error || 'Unknown'));
+    btn.disabled = false; btn.textContent = '↩️ Start Reply All'; return;
+  }
+  raJobId = res.job_id;
+  document.getElementById('ra-progress-card').style.display = '';
+  document.getElementById('ra-status-badge').textContent = 'Running…';
+  document.getElementById('ra-status-badge').style.background = '#4c1d95';
+  document.getElementById('ra-status-badge').style.color = '#c4b5fd';
+  document.getElementById('ra-summary').textContent = '';
+  if (raPollInterval) clearInterval(raPollInterval);
+  raPollInterval = setInterval(pollRaJob, 2500);
+  pollRaJob();
+}
+
+async function pollRaJob() {
+  if (!raJobId) return;
+  const job = await fetch('/api/replyall/' + raJobId).then(r => r.json()).catch(() => null);
+  if (!job) return;
+  const pct = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
+  document.getElementById('ra-progress-bar').style.width = pct + '%';
+  document.getElementById('ra-progress-label').textContent = `${job.done} / ${job.total} replies`;
+  document.getElementById('ra-ok-fail').innerHTML = `✅ ${job.ok || 0} &nbsp; ❌ ${job.fail || 0}`;
+  if (job.status === 'done' || job.status === 'error') {
+    clearInterval(raPollInterval); raPollInterval = null;
+    const badge = document.getElementById('ra-status-badge');
+    const ok = job.status === 'done';
+    badge.textContent = ok ? 'Done' : 'Error';
+    badge.style.background = ok ? '#065f46' : '#450a0a';
+    badge.style.color = ok ? '#6ee7b7' : '#fca5a5';
+    const lastLog = (job.log || []).slice(-1)[0] || '';
+    document.getElementById('ra-summary').innerHTML =
+      ok ? `<strong style="color:#fff">Done!</strong> ✅ ${job.ok || 0} sent &nbsp; ❌ ${job.fail || 0} failed${lastLog ? '<br>' + lastLog : ''}`
+         : `<span style="color:#f87171">${lastLog || 'Error occurred'}</span>`;
+    const btn = document.getElementById('ra-btn');
+    btn.disabled = false; btn.textContent = '↩️ Start Reply All';
+  }
+}
+
+// ── Scrape & Tag Users ────────────────────────────────────────────────────────
+let scJobId = null, scPollInterval = null;
+let tuJobId = null, tuPollInterval = null;
+
+async function loadSavedUsers() {
+  const d = await fetch('/api/scrape/saved').then(r => r.json()).catch(() => null);
+  const el = document.getElementById('tu-saved-preview');
+  if (!d || d.count === 0) {
+    el.innerHTML = '<span style="color:#6b7280">No saved users yet — run Step 1 first.</span>';
+  } else {
+    const preview = (d.users || []).map(u => `@${u}`).join(', ');
+    const more = d.count > 10 ? ` and ${d.count - 10} more…` : '';
+    el.innerHTML = `<span style="color:#6ee7b7">✅ ${d.count} users saved</span>` +
+      (d.source ? ` <span style="color:#6b7280;font-size:12px">from ${d.source.substring(0,60)}…</span>` : '') +
+      `<br><span style="color:#9ca3af;font-size:12px">${preview}${more}</span>`;
+  }
+}
+loadSavedUsers();
+
+async function startScrape() {
+  const url      = document.getElementById('sc-tweet-url').value.trim();
+  const noAdmins = document.getElementById('sc-no-admins').checked;
+  if (!url) { alert('Please enter a tweet URL'); return; }
+
+  const btn = document.getElementById('sc-btn');
+  btn.disabled = true; btn.textContent = '⏳ Scraping…';
+  const statusEl = document.getElementById('sc-status');
+  const savedEl  = document.getElementById('sc-saved-info');
+  statusEl.style.display = ''; statusEl.textContent = '⏳ Scraping replies…';
+  savedEl.style.display = 'none';
+
+  const res = await fetch('/api/scrape', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ tweet_url: url, no_admins: noAdmins })
+  }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
+
+  if (!res.ok) {
+    statusEl.textContent = '❌ ' + (res.error || 'Unknown error');
+    btn.disabled = false; btn.textContent = '🔍 Scrape & Save'; return;
+  }
+  scJobId = res.job_id;
+  if (scPollInterval) clearInterval(scPollInterval);
+  scPollInterval = setInterval(pollScJob, 2000);
+  pollScJob();
+}
+
+async function pollScJob() {
+  if (!scJobId) return;
+  const job = await fetch('/api/scrape/' + scJobId).then(r => r.json()).catch(() => null);
+  if (!job) return;
+  const statusEl = document.getElementById('sc-status');
+  const savedEl  = document.getElementById('sc-saved-info');
+  statusEl.textContent = job.message || '⏳ Scraping…';
+  if (job.status === 'done' || job.status === 'error') {
+    clearInterval(scPollInterval); scPollInterval = null;
+    const btn = document.getElementById('sc-btn');
+    btn.disabled = false; btn.textContent = '🔍 Scrape & Save';
+    if (job.status === 'done') {
+      savedEl.style.display = '';
+      savedEl.textContent = `✅ ${job.count} users saved — ready for Step 2`;
+      loadSavedUsers();
+    } else {
+      statusEl.style.color = '#f87171';
+    }
+  }
+}
+
+async function startTagUsers() {
+  const targetUrl = document.getElementById('tu-target-url').value.trim();
+  const count     = document.getElementById('tu-count').value.trim();
+  const noAdmins  = document.getElementById('tu-no-admins').checked;
+  if (!targetUrl) { alert('Please enter the target tweet URL'); return; }
+
+  const btn = document.getElementById('tu-btn');
+  btn.disabled = true; btn.textContent = '⏳ Starting…';
+
+  const body = { target_url: targetUrl, no_admins: noAdmins };
+  if (count) body.count = parseInt(count);
+  const res = await fetch('/api/tagusers', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
+
+  if (!res.ok) {
+    alert('Error: ' + (res.error || 'Unknown'));
+    btn.disabled = false; btn.textContent = '🏷 Tag Users'; return;
+  }
+  tuJobId = res.job_id;
+  document.getElementById('tu-progress-card').style.display = '';
+  document.getElementById('tu-status-badge').textContent = 'Running…';
+  document.getElementById('tu-status-badge').style.background = '#14532d';
+  document.getElementById('tu-status-badge').style.color = '#86efac';
+  document.getElementById('tu-summary').textContent = '';
+  if (tuPollInterval) clearInterval(tuPollInterval);
+  tuPollInterval = setInterval(pollTuJob, 2500);
+  pollTuJob();
+}
+
+async function pollTuJob() {
+  if (!tuJobId) return;
+  const job = await fetch('/api/tagusers/' + tuJobId).then(r => r.json()).catch(() => null);
+  if (!job) return;
+  const pct = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
+  document.getElementById('tu-progress-bar').style.width = pct + '%';
+  document.getElementById('tu-progress-label').textContent = `${job.done} / ${job.total} batches`;
+  document.getElementById('tu-ok-fail').innerHTML = `✅ ${job.ok || 0} &nbsp; ❌ ${job.fail || 0}`;
+  if (job.status === 'done' || job.status === 'error') {
+    clearInterval(tuPollInterval); tuPollInterval = null;
+    const badge = document.getElementById('tu-status-badge');
+    const ok = job.status === 'done';
+    badge.textContent = ok ? 'Done' : 'Error';
+    badge.style.background = ok ? '#065f46' : '#450a0a';
+    badge.style.color = ok ? '#6ee7b7' : '#fca5a5';
+    document.getElementById('tu-summary').innerHTML =
+      `<span style="color:${ok ? '#6ee7b7' : '#f87171'}">${job.message || (ok ? 'Done!' : 'Error')}</span>`;
+    const btn = document.getElementById('tu-btn');
+    btn.disabled = false; btn.textContent = '🏷 Tag Users';
   }
 }
 
