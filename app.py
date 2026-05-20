@@ -2021,6 +2021,15 @@ def api_scrape_status(job_id):
     return jsonify(job)
 
 
+@app.route("/api/scrape/clear", methods=["POST"])
+def api_scrape_clear():
+    save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+    if os.path.exists(save_path):
+        os.remove(save_path)
+        add_log("Scraped users list cleared via dashboard")
+    return jsonify({"ok": True})
+
+
 @app.route("/api/scrape/saved")
 def api_scrape_saved():
     save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
