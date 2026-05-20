@@ -456,10 +456,12 @@ async def handle_telegram_commands():
                         "/followers username — get followers (500 per call)\n"
                         "/following username — get following (500 per call)\n"
                         "/compare username — mutuals / followers-only / following-only\n"
-                        "/replies <tweet_url> [--no-admins] — scrape replies (skip verified with flag)\n"
+                        "/replies <tweet_url> [--no-admins] — scrape replies\n"
                         "/mirror <src> <tgt> [--no-admins] — copy replies to another tweet\n"
                         "/replyall <tweet_url> [count] [--no-admins] <text> — reply to every commenter\n"
-                        "/tag <src> <tgt> [count] [--no-admins] — tag repliers 5 per tweet under target\n"
+                        "/scrape <tweet_url> [--no-admins] — save repliers for later tagging\n"
+                        "/tagusers <target_url> [count] [--no-admins] — tag saved users 5 per tweet\n"
+                        "/tag <src> <tgt> [count] [--no-admins] — scrape + tag in one step\n"
                         "/complaints topic — search complaint tweets\n"
                         "/like <tweet_url> — like with all 200 accounts\n"
                         "/comment <tweet_url> [@mention] <text> — comment with all 200 accounts\n"
@@ -501,13 +503,19 @@ async def handle_telegram_commands():
                         "  count = how many accounts to use (default: all)\n"
                         "  --no-admins = skip verified/blue-tick accounts\n"
                         "  Example: /replyall https://x.com/.../123 50 Thanks! 🙌\n\n"
-                        "/tag <source_url> <target_url> [count] [--no-admins]\n"
-                        "  Scrapes all repliers from SOURCE tweet, collects unique\n"
-                        "  usernames, then tags them 5 at a time as replies on TARGET.\n"
-                        "  count = max users to tag total\n"
-                        "  --no-admins = skip verified accounts\n"
-                        "  Each posted reply: @user1 @user2 @user3 @user4 @user5\n"
+                        "/scrape <tweet_url> [--no-admins]\n"
+                        "  Scrapes all repliers from a tweet and SAVES their usernames.\n"
+                        "  Run this first, then use /tagusers whenever you're ready.\n"
+                        "  --no-admins = skip verified/blue-tick accounts\n"
+                        "  Example: /scrape https://x.com/user/status/123\n\n"
+                        "/tagusers <target_url> [count] [--no-admins]\n"
+                        "  Tags the users saved by /scrape — 5 per reply — under target.\n"
+                        "  count = max users to tag (default: all saved)\n"
+                        "  Each reply: @user1 @user2 @user3 @user4 @user5\n"
                         "  Posts 1 reply every 8s (Twitter rate limit)\n"
+                        "  Example: /tagusers https://x.com/yourprofile/status/999 50\n\n"
+                        "/tag <source_url> <target_url> [count] [--no-admins]\n"
+                        "  Shortcut: scrape + tag in one step (both URLs together).\n"
                         "  Example: /tag https://x.com/src/111 https://x.com/tgt/222 50\n\n"
                         "── Bulk Engagement (account pool) ──\n"
                         "/like <tweet_url> [count]\n"
@@ -1238,6 +1246,213 @@ async def handle_telegram_commands():
                             add_log(f"Tag done: {ok_count} batches posted, {fail_count} failed")
 
                         threading.Thread(target=_run_tag, daemon=True).start()
+
+                # ── /scrape <tweet_url> [--no-admins] ───────────────────────
+                elif cmd == "/scrape":
+                    raw_sc_args, skip_admins_sc = _parse_no_admins(args)
+                    sc_parts = raw_sc_args.strip().split()
+                    if not sc_parts:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /scrape <tweet_url> [--no-admins]\n\n"
+                            "Scrapes all repliers from a tweet and saves their usernames.\n"
+                            "Then use /tagusers to tag them under any post.\n\n"
+                            "Options:\n"
+                            "  --no-admins  skip verified/blue-tick accounts\n\n"
+                            "Examples:\n"
+                            "/scrape https://x.com/user/status/123\n"
+                            "/scrape https://x.com/user/status/123 --no-admins"
+                        ), disable_web_page_preview=True)
+                    else:
+                        sc_url = sc_parts[0]
+                        filter_note = " | skipping verified" if skip_admins_sc else ""
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"🔍 Scraping repliers from:\n{sc_url}{filter_note}\n\nWill save usernames for use with /tagusers",
+                            disable_web_page_preview=True
+                        )
+
+                        def _run_scrape(url=sc_url, skip=skip_admins_sc):
+                            import re as _re, json as _json, sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+
+                            sc = get_scraper()
+                            if not sc:
+                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in Settings tab."))
+                                return
+
+                            m = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", url)
+                            src_id = m.group(2) if m else ""
+                            if not src_id:
+                                asyncio.run(tb.send_message(f"❌ Could not parse tweet ID from: {url}"))
+                                return
+
+                            add_log(f"Scrape: fetching replies from tweet {src_id}…")
+                            try:
+                                query   = f"conversation_id:{src_id}"
+                                replies = sc.search(query=query, limit=500, save=True, filter_replies=False)
+                                replies, _, admins_removed = _filter_replies(replies, skip, src_id)
+                            except Exception as exc:
+                                asyncio.run(tb.send_message(f"❌ Error scraping tweet: {exc}"))
+                                return
+
+                            seen = set()
+                            usernames = []
+                            for r in replies:
+                                u = (r.get("user", {}).get("screen_name") or r.get("username", "")).strip()
+                                if u and u.lower() not in seen:
+                                    seen.add(u.lower())
+                                    usernames.append(u)
+
+                            if not usernames:
+                                asyncio.run(tb.send_message("⚠️ No users found in replies."))
+                                return
+
+                            save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+                            with open(save_path, "w") as f:
+                                _json.dump({"source": url, "users": usernames}, f, indent=2)
+
+                            admin_note = f" ({admins_removed} verified skipped)" if admins_removed else ""
+                            add_log(f"Scrape: saved {len(usernames)} users from tweet {src_id}")
+                            asyncio.run(tb.send_message(
+                                f"✅ Scraped & saved {len(usernames):,} unique users{admin_note}.\n"
+                                f"Source: {url}\n\n"
+                                f"Now run /tagusers to tag them under any post.\n"
+                                f"Example: /tagusers https://x.com/yourprofile/status/999"
+                            ))
+
+                        threading.Thread(target=_run_scrape, daemon=True).start()
+
+                # ── /tagusers <target_url> [count] [--no-admins] ─────────────
+                elif cmd == "/tagusers":
+                    raw_tu_args, skip_admins_tu = _parse_no_admins(args)
+                    raw_tu_args, tu_count = _parse_count(raw_tu_args)
+                    tu_parts = raw_tu_args.strip().split()
+                    if not tu_parts:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /tagusers <target_url> [count] [--no-admins]\n\n"
+                            "Tags the users saved by /scrape — 5 per reply — under the target tweet.\n\n"
+                            "Options:\n"
+                            "  count        max users to tag (default: all saved)\n"
+                            "  --no-admins  skip verified accounts from the saved list\n\n"
+                            "Examples:\n"
+                            "/tagusers https://x.com/yourprofile/status/999\n"
+                            "/tagusers https://x.com/yourprofile/status/999 50\n"
+                            "/tagusers https://x.com/yourprofile/status/999 50 --no-admins\n\n"
+                            "Run /scrape first to build the user list."
+                        ), disable_web_page_preview=True)
+                    else:
+                        tu_url = tu_parts[0]
+                        filter_note = " | skip verified" if skip_admins_tu else ""
+                        count_note  = f" | max {tu_count} users" if tu_count else ""
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"🏷 TagUsers started.\nTarget: {tu_url}{filter_note}{count_note}\n\nLoading saved users…",
+                            disable_web_page_preview=True
+                        )
+
+                        def _run_tagusers(tgt=tu_url, skip=skip_admins_tu, max_users=tu_count):
+                            import re as _re, json as _json, sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                            import twitter_post as _tp
+
+                            # ── 1. Load saved users ───────────────────────────
+                            save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+                            if not os.path.exists(save_path):
+                                asyncio.run(tb.send_message(
+                                    "❌ No saved users found. Run /scrape <tweet_url> first."
+                                ))
+                                return
+                            try:
+                                with open(save_path) as f:
+                                    data = _json.load(f)
+                                usernames = data.get("users", [])
+                                source    = data.get("source", "unknown")
+                            except Exception as exc:
+                                asyncio.run(tb.send_message(f"❌ Could not read scraped_users.json: {exc}"))
+                                return
+
+                            if not usernames:
+                                asyncio.run(tb.send_message("❌ Saved user list is empty. Run /scrape first."))
+                                return
+
+                            # Optionally filter verified from saved list
+                            if skip:
+                                usernames = [u for u in usernames if u]  # already filtered at scrape time
+
+                            if max_users:
+                                usernames = usernames[:max_users]
+
+                            # ── 2. Resolve target tweet ID ────────────────────
+                            m_tgt = _re.search(r"(?:x|twitter)\.com/[^/]+/status/(\d+)", tgt)
+                            if not m_tgt:
+                                asyncio.run(tb.send_message(f"❌ Could not parse target tweet ID from:\n{tgt}"))
+                                return
+                            target_id = m_tgt.group(1)
+
+                            # ── 3. Load account pool ──────────────────────────
+                            pool = _tp.load_account_pool()
+                            if not pool:
+                                asyncio.run(tb.send_message("❌ Account pool empty. Check tools/cookies.json."))
+                                return
+
+                            auth_token, ct0 = _tp.get_auth_from_config()
+                            if not auth_token or not ct0:
+                                asyncio.run(tb.send_message("❌ ct0 missing. Add both auth_token AND ct0 in Settings."))
+                                return
+
+                            batches = [usernames[i:i+5] for i in range(0, len(usernames), 5)]
+                            asyncio.run(tb.send_message(
+                                f"✅ {len(usernames)} saved users → {len(batches)} batches of 5.\n"
+                                f"Source was: {source}\n"
+                                f"Posting under: {tgt}"
+                            ))
+
+                            # ── 4. Post each batch of 5 ───────────────────────
+                            ok_count   = 0
+                            fail_count = 0
+                            pool_idx   = 0
+
+                            for i, batch in enumerate(batches):
+                                post_text = " ".join(f"@{u}" for u in batch)
+
+                                account   = pool[pool_idx % len(pool)]
+                                pool_idx += 1
+                                auth_tok  = account.get("cookies", {}).get("auth_token", "") or auth_token
+                                ct0_val   = account.get("cookies", {}).get("ct0", "")        or ct0
+                                acct_name = account.get("username", f"acct_{pool_idx}")
+
+                                result = _tp.post_reply(post_text, target_id, auth_tok, ct0_val)
+                                if result.get("ok"):
+                                    ok_count += 1
+                                    add_log(f"TagUsers: ✅ batch {i+1} via @{acct_name}: {post_text[:60]}")
+                                else:
+                                    fail_count += 1
+                                    add_log(f"TagUsers: ❌ batch {i+1} failed: {result.get('error','?')}")
+                                    if fail_count >= 3 and ok_count == 0:
+                                        asyncio.run(tb.send_message(
+                                            f"❌ Posting failing (3 errors, 0 successes). Stopping.\n"
+                                            f"Error: {result.get('error','?')}\n"
+                                            f"Check your ct0 cookie in Settings."
+                                        ))
+                                        return
+
+                                if (i + 1) % 20 == 0:
+                                    asyncio.run(tb.send_message(
+                                        f"🏷 TagUsers progress: {i+1}/{len(batches)} batches\n"
+                                        f"✅ {ok_count} posted | ❌ {fail_count} failed"
+                                    ))
+
+                                time.sleep(8)
+
+                            asyncio.run(tb.send_message(
+                                f"🏁 TagUsers complete!\n"
+                                f"Users tagged: {len(usernames)}\n"
+                                f"Batches: {len(batches)} (5 per tweet)\n"
+                                f"✅ {ok_count} posted | ❌ {fail_count} failed"
+                            ))
+                            add_log(f"TagUsers done: {ok_count} batches posted, {fail_count} failed")
+
+                        threading.Thread(target=_run_tagusers, daemon=True).start()
 
                 # ── /like <tweet_url> ───────────────────────────────────────
                 elif cmd == "/like":
