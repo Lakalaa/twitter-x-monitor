@@ -112,6 +112,7 @@
 <div class="tabs">
   <div class="tab active" onclick="showTab('dashboard')">Dashboard</div>
   <div class="tab" onclick="showTab('targets')">Targets</div>
+  <div class="tab" onclick="showTab('engage')">🚀 Engage</div>
   <div class="tab" onclick="showTab('settings')">Settings</div>
   <div class="tab" onclick="showTab('commands')">Bot Commands</div>
 </div>
@@ -301,6 +302,81 @@
     </div>
   </div>
 
+  <!-- ENGAGE -->
+  <div class="panel" id="tab-engage">
+    <div class="card">
+      <h2>🚀 Bulk Engagement</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:20px">
+        Use all <strong style="color:#fff">200 accounts</strong> to like, comment, or both on any tweet.
+        Accounts act one after another with a random 3–8 second delay between each.
+      </p>
+
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <div>
+          <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL</label>
+          <input id="eng-tweet-url" type="text" placeholder="https://x.com/user/status/123456789"
+            style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Action</label>
+          <div style="display:flex;gap:10px">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:#d1d5db">
+              <input type="radio" name="eng-action" value="like" checked style="accent-color:#3b82f6"> ❤️ Like only
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:#d1d5db">
+              <input type="radio" name="eng-action" value="comment" style="accent-color:#3b82f6"> 💬 Comment only
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:#d1d5db">
+              <input type="radio" name="eng-action" value="both" style="accent-color:#3b82f6"> 🚀 Like + Comment
+            </label>
+          </div>
+        </div>
+
+        <div id="eng-comment-fields">
+          <div style="display:flex;gap:10px">
+            <div style="flex:0 0 200px">
+              <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">@Mention (optional)</label>
+              <input id="eng-mention" type="text" placeholder="@username"
+                style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+            </div>
+            <div style="flex:1">
+              <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Comment text</label>
+              <input id="eng-comment" type="text" placeholder="Great post! 🔥"
+                style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+            </div>
+          </div>
+        </div>
+
+        <button onclick="startEngage()" id="eng-btn"
+          style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:15px;font-weight:600;cursor:pointer;align-self:flex-start">
+          🚀 Start Engagement
+        </button>
+      </div>
+    </div>
+
+    <!-- Progress card (hidden until job starts) -->
+    <div class="card" id="eng-progress-card" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="margin:0">Progress</h2>
+        <span id="eng-status-badge" style="font-size:13px;padding:4px 12px;border-radius:20px;background:#1e40af;color:#93c5fd">Running…</span>
+      </div>
+
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:#9ca3af;margin-bottom:6px">
+          <span id="eng-progress-label">0 / 0 accounts</span>
+          <span id="eng-ok-fail">✅ 0 &nbsp; ❌ 0</span>
+        </div>
+        <div style="background:#1f2937;border-radius:6px;height:10px;overflow:hidden">
+          <div id="eng-progress-bar" style="height:100%;background:#3b82f6;width:0%;transition:width 0.4s"></div>
+        </div>
+      </div>
+
+      <div id="eng-summary" style="font-size:13px;color:#6b7280"></div>
+    </div>
+  </div>
+
   <!-- BOT COMMANDS -->
   <div class="panel" id="tab-commands">
     <div class="card">
@@ -343,11 +419,92 @@ const tags = { followers: [], following: [] };
 const complaints = [];
 
 function showTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['dashboard','targets','settings','commands'][i] === name));
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['dashboard','targets','engage','settings','commands'][i] === name));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   if (name === 'targets') loadTargets();
   if (name === 'settings') loadSecretsStatus();
+  if (name === 'engage') initEngageTab();
+}
+
+// ── Engagement tab ────────────────────────────────────────────────────────────
+let engJobId = null;
+let engPollInterval = null;
+
+function initEngageTab() {
+  document.querySelectorAll('input[name="eng-action"]').forEach(r => {
+    r.addEventListener('change', () => {
+      const action = document.querySelector('input[name="eng-action"]:checked').value;
+      document.getElementById('eng-comment-fields').style.display = action === 'like' ? 'none' : '';
+    });
+  });
+  // Set initial visibility
+  const action = document.querySelector('input[name="eng-action"]:checked').value;
+  document.getElementById('eng-comment-fields').style.display = action === 'like' ? 'none' : '';
+}
+
+async function startEngage() {
+  const url     = document.getElementById('eng-tweet-url').value.trim();
+  const action  = document.querySelector('input[name="eng-action"]:checked').value;
+  const comment = document.getElementById('eng-comment').value.trim();
+  const mention = document.getElementById('eng-mention').value.trim();
+
+  if (!url) { alert('Please enter a tweet URL'); return; }
+  if (action !== 'like' && !comment && !mention) { alert('Please enter a comment or @mention'); return; }
+
+  const btn = document.getElementById('eng-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Starting…';
+
+  const body = { tweet_url: url, action, comment_text: comment, mention };
+  const res = await fetch('/api/engage', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
+
+  if (!res.ok) {
+    alert('Error: ' + (res.error || 'Unknown error'));
+    btn.disabled = false;
+    btn.textContent = '🚀 Start Engagement';
+    return;
+  }
+
+  engJobId = res.job_id;
+  document.getElementById('eng-progress-card').style.display = '';
+  document.getElementById('eng-status-badge').textContent = 'Running…';
+  document.getElementById('eng-status-badge').style.background = '#1e40af';
+  document.getElementById('eng-status-badge').style.color = '#93c5fd';
+  document.getElementById('eng-summary').textContent = '';
+
+  if (engPollInterval) clearInterval(engPollInterval);
+  engPollInterval = setInterval(pollEngageJob, 2000);
+  pollEngageJob();
+}
+
+async function pollEngageJob() {
+  if (!engJobId) return;
+  const job = await fetch('/api/engage/' + engJobId).then(r => r.json()).catch(() => null);
+  if (!job) return;
+
+  const pct   = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
+  document.getElementById('eng-progress-bar').style.width = pct + '%';
+  document.getElementById('eng-progress-label').textContent = `${job.done} / ${job.total} accounts`;
+  document.getElementById('eng-ok-fail').innerHTML = `✅ ${job.ok} &nbsp; ❌ ${job.fail}`;
+
+  if (job.status === 'done') {
+    clearInterval(engPollInterval);
+    engPollInterval = null;
+    const badge = document.getElementById('eng-status-badge');
+    badge.textContent = 'Done';
+    badge.style.background = '#065f46';
+    badge.style.color = '#6ee7b7';
+    document.getElementById('eng-summary').innerHTML =
+      `<strong style="color:#fff">Finished!</strong> ✅ ${job.ok} succeeded &nbsp; ❌ ${job.fail} failed` +
+      (job.error ? `<br><span style="color:#f87171">Error: ${job.error}</span>` : '');
+    const btn = document.getElementById('eng-btn');
+    btn.disabled = false;
+    btn.textContent = '🚀 Start Engagement';
+  }
 }
 
 // ── Status polling ────────────────────────────────────────────────────────────
