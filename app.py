@@ -396,6 +396,7 @@ async def handle_telegram_commands():
                         "/compare username — mutuals / followers-only / following-only\n"
                         "/replies <tweet_url> — scrape all replies to a tweet\n"
                         "/mirror <src_url> <tgt_url> — copy replies from one tweet onto another\n"
+                        "/replyall <tweet_url> <text> — reply to every commenter using 200 accounts\n"
                         "/complaints topic — search complaint tweets\n"
                         "/like <tweet_url> — like with all 200 accounts\n"
                         "/comment <tweet_url> [@mention] <text> — comment with all 200 accounts\n"
@@ -429,6 +430,13 @@ async def handle_telegram_commands():
                         "  as a comment on target tweet (from your account).\n"
                         "  Format: 💬 @originaluser: their comment\n"
                         "  Posts 1 reply every 8s (Twitter rate limit)\n\n"
+                        "/replyall <tweet_url> [@mention] <text>\n"
+                        "  Scrapes every reply under a tweet, then replies back\n"
+                        "  to each commenter using your 200 accounts (rotating).\n"
+                        "  One account replies to one commenter, then next account, etc.\n"
+                        "  Optional @mention is prepended to every reply.\n"
+                        "  Example: /replyall https://x.com/.../123 Thanks! 🙌\n"
+                        "  Example with mention: /replyall https://x.com/.../123 @elonmusk check this!\n\n"
                         "── Bulk Engagement (200 accounts) ──\n"
                         "/like <tweet_url>\n"
                         "  Likes the tweet from all 200 accounts\n\n"
@@ -872,6 +880,150 @@ async def handle_telegram_commands():
                             add_log(f"Mirror done: {ok_count} posted, {fail_count} failed")
 
                         threading.Thread(target=_run_mirror, daemon=True).start()
+
+                # ── /replyall <tweet_url> <reply_text> ──────────────────────
+                elif cmd == "/replyall":
+                    parts = args.strip().split(None, 1)
+                    if len(parts) < 2:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /replyall <tweet_url> <reply_text>\n\n"
+                            "Scrapes every reply under a tweet, then replies back to each commenter\n"
+                            "using your 200 accounts (one account per commenter, rotating).\n\n"
+                            "Optional @mention prefix:\n"
+                            "/replyall <url> @username your text\n\n"
+                            "Example:\n"
+                            "/replyall https://x.com/user/status/123 Thanks for your comment! 🙌"
+                        ), disable_web_page_preview=True)
+                    else:
+                        ra_tweet_url = parts[0].strip()
+                        ra_reply_body = parts[1].strip()
+                        # Optional @mention prefix
+                        ra_parts = ra_reply_body.split(None, 1)
+                        ra_mention = ""
+                        if ra_parts[0].startswith("@"):
+                            ra_mention = ra_parts[0]
+                            ra_reply_body = ra_parts[1] if len(ra_parts) > 1 else ""
+
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=(
+                                f"🔍 Scraping replies for:\n{ra_tweet_url}\n\n"
+                                f"Will then reply to each commenter using your 200 accounts."
+                            ),
+                            disable_web_page_preview=True
+                        )
+
+                        def _run_replyall(url=ra_tweet_url, reply_text=ra_reply_body, mention=ra_mention):
+                            import re as _re
+                            import sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                            import twitter_post as _tp
+
+                            # ── 1. Scrape replies ─────────────────────────────
+                            sc = get_scraper()
+                            if not sc:
+                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
+                                return
+
+                            m = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", url)
+                            tweet_author = m.group(1) if m else ""
+                            tweet_id     = m.group(2) if m else ""
+
+                            if not tweet_id:
+                                asyncio.run(tb.send_message(f"❌ Could not parse tweet ID from: {url}"))
+                                return
+
+                            add_log(f"ReplyAll: scraping replies to tweet {tweet_id}…")
+                            try:
+                                query   = f"conversation_id:{tweet_id}"
+                                replies = sc.search(query=query, limit=500, save=True, filter_replies=False)
+                                # Remove the original tweet itself
+                                replies = [r for r in replies
+                                           if str(r.get("id", "")) != tweet_id
+                                           and str(r.get("tweet_id", "")) != tweet_id]
+                            except Exception as exc:
+                                asyncio.run(tb.send_message(f"❌ Error scraping replies: {exc}"))
+                                return
+
+                            if not replies:
+                                asyncio.run(tb.send_message("⚠️ No replies found for that tweet."))
+                                return
+
+                            # ── 2. Load account pool ──────────────────────────
+                            pool = _tp.load_account_pool()
+                            if not pool:
+                                asyncio.run(tb.send_message("❌ Account pool empty. Check tools/cookies.json."))
+                                return
+
+                            asyncio.run(tb.send_message(
+                                f"✅ Found {len(replies):,} replies.\n"
+                                f"Replying to each commenter using {len(pool)} accounts…\n"
+                                f"(~{len(replies)*5//60}–{len(replies)*8//60} min estimated)"
+                            ))
+                            add_log(f"ReplyAll: replying to {len(replies)} commenters with {len(pool)} accounts")
+
+                            # ── 3. Reply to each commenter ────────────────────
+                            ok_count   = 0
+                            fail_count = 0
+                            pool_idx   = 0
+
+                            for i, reply in enumerate(replies):
+                                # Get commenter's username and their tweet ID
+                                commenter = (reply.get("user", {}).get("screen_name")
+                                             or reply.get("username", "unknown"))
+                                reply_tweet_id = str(reply.get("id") or reply.get("tweet_id") or "")
+                                if not reply_tweet_id:
+                                    fail_count += 1
+                                    continue
+
+                                # Pick next account from pool (rotate)
+                                account = pool[pool_idx % len(pool)]
+                                pool_idx += 1
+                                auth_tok = account.get("cookies", {}).get("auth_token", "")
+                                ct0_val  = account.get("cookies", {}).get("ct0", "")
+                                acct_name = account.get("username", f"account_{pool_idx}")
+
+                                if not auth_tok or not ct0_val:
+                                    fail_count += 1
+                                    continue
+
+                                # Build reply text: optional @mention + "@commenter " + body
+                                parts_txt = []
+                                if mention:
+                                    parts_txt.append(mention)
+                                parts_txt.append(f"@{commenter}")
+                                if reply_text:
+                                    parts_txt.append(reply_text)
+                                post_text = " ".join(parts_txt)
+                                if len(post_text) > 280:
+                                    post_text = post_text[:277] + "…"
+
+                                result = _tp.post_reply(post_text, reply_tweet_id, auth_tok, ct0_val)
+                                if result.get("ok"):
+                                    ok_count += 1
+                                    add_log(f"ReplyAll: ✅ replied to @{commenter} (via @{acct_name})")
+                                else:
+                                    fail_count += 1
+                                    add_log(f"ReplyAll: ❌ failed @{commenter}: {result.get('error','?')}")
+
+                                # Progress every 25
+                                if (i + 1) % 25 == 0:
+                                    asyncio.run(tb.send_message(
+                                        f"↩️ ReplyAll progress: {i+1}/{len(replies)}\n"
+                                        f"✅ {ok_count} sent | ❌ {fail_count} failed"
+                                    ))
+
+                                time.sleep(5)  # rate-limit friendly
+
+                            asyncio.run(tb.send_message(
+                                f"🏁 ReplyAll complete!\n"
+                                f"Tweet: {url}\n"
+                                f"Commenters found: {len(replies)}\n"
+                                f"✅ {ok_count} replies sent | ❌ {fail_count} failed"
+                            ))
+                            add_log(f"ReplyAll done: {ok_count} sent, {fail_count} failed")
+
+                        threading.Thread(target=_run_replyall, daemon=True).start()
 
                 # ── /like <tweet_url> ───────────────────────────────────────
                 elif cmd == "/like":
