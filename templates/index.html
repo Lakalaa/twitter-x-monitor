@@ -537,6 +537,60 @@
       <div id="tu-summary" style="font-size:13px;color:#6b7280"></div>
     </div>
 
+    <!-- TAG FOLLOWERS / FOLLOWING -->
+    <div class="card">
+      <h2>👥 Tag Followers / Following</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:16px">
+        Pick any cached followers or following list, then tag those usernames — <strong style="color:#fff">5 per reply</strong> — under any tweet you choose.
+      </p>
+
+      <!-- Cached accounts selector -->
+      <div style="background:#0a0c12;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-bottom:14px">
+        <div style="font-size:13px;font-weight:600;color:#60a5fa;margin-bottom:10px">Select Source List</div>
+        <div id="tf-no-cache" style="font-size:13px;color:#6b7280;display:none">
+          No cached follower/following lists yet. Use <code style="background:#1a1d27;padding:2px 6px;border-radius:4px;color:#60a5fa">/followers username</code> or <code style="background:#1a1d27;padding:2px 6px;border-radius:4px;color:#60a5fa">/following username</code> in Telegram first.
+        </div>
+        <div id="tf-cache-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        <div id="tf-selected-info" style="margin-top:10px;font-size:13px;color:#9ca3af;display:none"></div>
+      </div>
+
+      <!-- Target + options -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Target tweet URL (where to post @mentions)</label>
+            <input id="tf-target-url" type="text" placeholder="https://x.com/yourprofile/status/999"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 130px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Max users <span style="color:#6b7280">(optional)</span></label>
+            <input id="tf-count" type="number" min="1" placeholder="all"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+        </div>
+        <button onclick="startTagFollowers()" id="tf-btn"
+          style="background:#f59e0b;color:#111;border:none;border-radius:8px;padding:12px 28px;font-size:15px;font-weight:600;cursor:pointer;align-self:flex-start">
+          👥 Tag Followers / Following
+        </button>
+      </div>
+    </div>
+    <div class="card" id="tf-progress-card" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="margin:0">Tag Followers Progress</h2>
+        <span id="tf-status-badge" style="font-size:13px;padding:4px 12px;border-radius:20px;background:#451a03;color:#fbbf24">Running…</span>
+      </div>
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:#9ca3af;margin-bottom:6px">
+          <span id="tf-progress-label">0 / 0 batches</span>
+          <span id="tf-ok-fail">✅ 0 &nbsp; ❌ 0</span>
+        </div>
+        <div style="background:#1f2937;border-radius:6px;height:10px;overflow:hidden">
+          <div id="tf-progress-bar" style="height:100%;background:#f59e0b;width:0%;transition:width 0.4s"></div>
+        </div>
+      </div>
+      <div id="tf-summary" style="font-size:13px;color:#6b7280"></div>
+    </div>
+
   </div>
 
   <!-- BOT COMMANDS -->
@@ -978,6 +1032,106 @@ async function clearSavedUsers() {
   if (!confirm('Clear all saved users? This cannot be undone.')) return;
   await fetch('/api/scrape/clear', { method: 'POST' });
   loadSavedUsers();
+}
+
+// ── Tag Followers / Following ─────────────────────────────────────────────────
+let tfSelected = null; // { kind, username, count }
+let tfJobId = null, tfPollInterval = null;
+
+async function loadCachedAccounts() {
+  const items = await fetch('/api/cache-status').then(r => r.json()).catch(() => []);
+  const listEl  = document.getElementById('tf-cache-list');
+  const noEl    = document.getElementById('tf-no-cache');
+  if (!listEl) return;
+  if (!items.length) {
+    listEl.innerHTML = '';
+    noEl.style.display = '';
+    return;
+  }
+  noEl.style.display = 'none';
+  listEl.innerHTML = items.map(it => `
+    <button onclick="selectTfSource('${it.kind}','${it.username}',${it.count})"
+      id="tf-pill-${it.kind}-${it.username}"
+      style="background:#252836;border:1px solid #374151;color:#d1d5db;border-radius:20px;
+             padding:6px 14px;font-size:13px;cursor:pointer;transition:all .15s">
+      ${it.kind === 'followers' ? '👥' : '➡️'} @${it.username}
+      <span style="color:#6b7280;font-size:11px"> ${it.count.toLocaleString()}</span>
+    </button>`).join('');
+}
+loadCachedAccounts();
+setInterval(loadCachedAccounts, 15000);
+
+function selectTfSource(kind, username, count) {
+  tfSelected = { kind, username, count };
+  // Highlight selected pill
+  document.querySelectorAll('[id^="tf-pill-"]').forEach(el => {
+    el.style.background = '#252836';
+    el.style.borderColor = '#374151';
+    el.style.color = '#d1d5db';
+  });
+  const pill = document.getElementById(`tf-pill-${kind}-${username}`);
+  if (pill) {
+    pill.style.background = '#1e3a5f';
+    pill.style.borderColor = '#3b82f6';
+    pill.style.color = '#93c5fd';
+  }
+  const infoEl = document.getElementById('tf-selected-info');
+  infoEl.style.display = '';
+  infoEl.innerHTML = `Selected: <strong style="color:#fff">${kind === 'followers' ? 'Followers' : 'Following'} of @${username}</strong>
+    <span style="color:#f59e0b;margin-left:8px">${count.toLocaleString()} users cached</span>`;
+}
+
+async function startTagFollowers() {
+  if (!tfSelected) { alert('Please select a source list above'); return; }
+  const targetUrl = document.getElementById('tf-target-url').value.trim();
+  const count     = document.getElementById('tf-count').value.trim();
+  if (!targetUrl) { alert('Please enter the target tweet URL'); return; }
+
+  const btn = document.getElementById('tf-btn');
+  btn.disabled = true; btn.textContent = '⏳ Starting…';
+
+  const body = { kind: tfSelected.kind, username: tfSelected.username, target_url: targetUrl };
+  if (count) body.count = parseInt(count);
+  const res = await fetch('/api/tagfollowers', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
+
+  if (!res.ok) {
+    alert('Error: ' + (res.error || 'Unknown'));
+    btn.disabled = false; btn.textContent = '👥 Tag Followers / Following'; return;
+  }
+  tfJobId = res.job_id;
+  document.getElementById('tf-progress-card').style.display = '';
+  document.getElementById('tf-status-badge').textContent = 'Running…';
+  document.getElementById('tf-status-badge').style.background = '#451a03';
+  document.getElementById('tf-status-badge').style.color = '#fbbf24';
+  document.getElementById('tf-summary').textContent = '';
+  if (tfPollInterval) clearInterval(tfPollInterval);
+  tfPollInterval = setInterval(pollTfJob, 2500);
+  pollTfJob();
+}
+
+async function pollTfJob() {
+  if (!tfJobId) return;
+  const job = await fetch('/api/tagfollowers/' + tfJobId).then(r => r.json()).catch(() => null);
+  if (!job) return;
+  const pct = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
+  document.getElementById('tf-progress-bar').style.width = pct + '%';
+  document.getElementById('tf-progress-label').textContent = `${job.done} / ${job.total} batches`;
+  document.getElementById('tf-ok-fail').innerHTML = `✅ ${job.ok || 0} &nbsp; ❌ ${job.fail || 0}`;
+  if (job.status === 'done' || job.status === 'error') {
+    clearInterval(tfPollInterval); tfPollInterval = null;
+    const badge = document.getElementById('tf-status-badge');
+    const ok = job.status === 'done';
+    badge.textContent = ok ? 'Done' : 'Error';
+    badge.style.background = ok ? '#065f46' : '#450a0a';
+    badge.style.color = ok ? '#6ee7b7' : '#fca5a5';
+    document.getElementById('tf-summary').innerHTML =
+      `<span style="color:${ok ? '#6ee7b7' : '#f87171'}">${job.message || (ok ? 'Done!' : 'Error')}</span>`;
+    const btn = document.getElementById('tf-btn');
+    btn.disabled = false; btn.textContent = '👥 Tag Followers / Following';
+  }
 }
 
 // ── Cache status table ─────────────────────────────────────────────────────────
