@@ -1,11 +1,12 @@
 """
-Twitter posting — reply/comment on tweets using cookie auth.
+Twitter posting — reply/comment, like, and bulk engagement using cookie auth.
 Uses curl_cffi to impersonate Chrome and call Twitter's internal GraphQL API.
 """
 
 import json
 import os
 import time
+import random
 
 try:
     from curl_cffi import requests as _curl
@@ -26,6 +27,11 @@ _CREATE_TWEET_QUERY_IDS = [
     "rwpVT1eOpetM8y6CiL5MiQ",
 ]
 
+_LIKE_QUERY_IDS = [
+    "lI07N6Otwv1PhnEgXILM7A",
+    "ZYKSe-w7KEslx3JhSIk5LA",
+]
+
 
 def _headers(auth_token: str, ct0: str) -> dict:
     return {
@@ -44,6 +50,23 @@ def _headers(auth_token: str, ct0: str) -> dict:
             "Chrome/124.0.0.0 Safari/537.36"
         ),
     }
+
+
+def _http_post(url: str, payload: dict, headers: dict) -> tuple:
+    """Returns (status_code, body_text). Works with or without curl_cffi."""
+    if _HAS_CURL:
+        resp = _curl.post(url, json=payload, headers=headers,
+                          impersonate="chrome124", timeout=30)
+        return resp.status_code, resp.text
+    else:
+        import urllib.request as _ur
+        req = _ur.Request(url, data=json.dumps(payload).encode(),
+                          headers=headers, method="POST")
+        try:
+            with _ur.urlopen(req, timeout=30) as r:
+                return r.status, r.read().decode()
+        except Exception as exc:
+            raise exc
 
 
 def _create_tweet_payload(text: str, reply_to_id: str, query_id: str) -> dict:
@@ -100,24 +123,7 @@ def post_reply(text: str, in_reply_to_tweet_id: str,
         payload = _create_tweet_payload(text, in_reply_to_tweet_id, query_id)
 
         try:
-            if _HAS_CURL:
-                resp = _curl.post(
-                    url, json=payload, headers=headers,
-                    impersonate="chrome124", timeout=30
-                )
-                status = resp.status_code
-                body   = resp.text
-            else:
-                import urllib.request as _ur
-                req = _ur.Request(
-                    url,
-                    data=json.dumps(payload).encode(),
-                    headers=headers,
-                    method="POST"
-                )
-                with _ur.urlopen(req, timeout=30) as r:
-                    status = r.status
-                    body   = r.read().decode()
+            status, body = _http_post(url, payload, headers)
 
             if status in (200, 201):
                 data = json.loads(body)
@@ -130,7 +136,6 @@ def post_reply(text: str, in_reply_to_tweet_id: str,
                 )
                 if tweet_id:
                     return {"ok": True, "tweet_id": tweet_id}
-                # GraphQL 200 with errors
                 errors = data.get("errors", [])
                 last_error = errors[0].get("message", body[:200]) if errors else body[:200]
             else:
@@ -142,6 +147,172 @@ def post_reply(text: str, in_reply_to_tweet_id: str,
         time.sleep(1)
 
     return {"ok": False, "error": last_error}
+
+
+def like_tweet(tweet_id: str, auth_token: str, ct0: str) -> dict:
+    """
+    Like a tweet.
+    Returns {"ok": True} or {"ok": False, "error": "..."}.
+    """
+    if not auth_token or not ct0:
+        return {"ok": False, "error": "Missing auth_token or ct0"}
+
+    headers = _headers(auth_token, ct0)
+    last_error = "No query IDs to try"
+
+    for query_id in _LIKE_QUERY_IDS:
+        url = f"https://x.com/i/api/graphql/{query_id}/FavoriteTweet"
+        payload = {
+            "variables": {"tweet_id": tweet_id},
+            "queryId": query_id,
+        }
+        try:
+            status, body = _http_post(url, payload, headers)
+            if status in (200, 201):
+                data = json.loads(body)
+                # Success: {"data": {"favorite_tweet": "Done"}}
+                if data.get("data", {}).get("favorite_tweet"):
+                    return {"ok": True}
+                errors = data.get("errors", [])
+                last_error = errors[0].get("message", body[:200]) if errors else body[:200]
+                # Already liked is still fine
+                if "already" in last_error.lower():
+                    return {"ok": True, "note": "already liked"}
+            else:
+                last_error = f"HTTP {status}: {body[:200]}"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(1)
+
+    return {"ok": False, "error": last_error}
+
+
+def extract_tweet_id(url_or_id: str) -> str:
+    """Extract tweet ID from a URL like https://x.com/user/status/123456789 or return as-is."""
+    s = url_or_id.strip().rstrip("/")
+    if s.isdigit():
+        return s
+    parts = s.split("/")
+    for i, p in enumerate(parts):
+        if p == "status" and i + 1 < len(parts):
+            tid = parts[i + 1].split("?")[0]
+            if tid.isdigit():
+                return tid
+    return s
+
+
+def load_account_pool(cookies_file: str = "tools/cookies.json") -> list:
+    """Load the multi-account pool from cookies.json."""
+    if not os.path.exists(cookies_file):
+        return []
+    try:
+        with open(cookies_file) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def bulk_engage(
+    tweet_url: str,
+    action: str,            # "like", "comment", or "both"
+    comment_text: str = "",
+    mention: str = "",      # @username to prepend to every comment
+    accounts: list = None,  # subset of pool; if None, uses full pool
+    delay_min: float = 3.0,
+    delay_max: float = 8.0,
+    progress_cb=None,       # callback(done, total, username, result_str)
+) -> dict:
+    """
+    Run like/comment/both on a tweet using the full account pool.
+
+    Returns:
+        {
+          "tweet_id": str,
+          "action": str,
+          "total": int,
+          "ok": int,
+          "fail": int,
+          "results": [{"username": ..., "action": ..., "ok": bool, "detail": ...}]
+        }
+    """
+    tweet_id = extract_tweet_id(tweet_url)
+    if not tweet_id or not tweet_id.isdigit():
+        return {"ok": 0, "fail": 0, "error": f"Could not parse tweet ID from: {tweet_url}"}
+
+    pool = accounts if accounts is not None else load_account_pool()
+    if not pool:
+        return {"ok": 0, "fail": 0, "error": "Account pool is empty. Check tools/cookies.json."}
+
+    # Build comment text: optional @mention prefix
+    def build_comment(base_text: str) -> str:
+        parts = []
+        if mention:
+            tag = mention if mention.startswith("@") else f"@{mention}"
+            parts.append(tag)
+        if base_text:
+            parts.append(base_text)
+        return " ".join(parts) if parts else ""
+
+    results = []
+    ok_count = 0
+    fail_count = 0
+    total = len(pool)
+
+    for i, entry in enumerate(pool):
+        username = entry.get("username", f"account_{i}")
+        cookies  = entry.get("cookies", {})
+        auth_tok = cookies.get("auth_token", "")
+        ct0_val  = cookies.get("ct0", "")
+
+        if not auth_tok or not ct0_val:
+            results.append({"username": username, "action": action, "ok": False, "detail": "missing credentials"})
+            fail_count += 1
+            if progress_cb:
+                progress_cb(i + 1, total, username, "❌ missing creds")
+            continue
+
+        entry_results = []
+
+        if action in ("like", "both"):
+            res = like_tweet(tweet_id, auth_tok, ct0_val)
+            entry_results.append(("like", res))
+
+        if action in ("comment", "both"):
+            text = build_comment(comment_text)
+            if text:
+                res = post_reply(text, tweet_id, auth_tok, ct0_val)
+            else:
+                res = {"ok": False, "error": "No comment text provided"}
+            entry_results.append(("comment", res))
+
+        # Aggregate success for this account
+        all_ok = all(r["ok"] for _, r in entry_results)
+        detail = "; ".join(
+            f"{a}={'ok' if r['ok'] else r.get('error','?')}"
+            for a, r in entry_results
+        )
+        results.append({"username": username, "action": action, "ok": all_ok, "detail": detail})
+        if all_ok:
+            ok_count += 1
+        else:
+            fail_count += 1
+
+        if progress_cb:
+            status_str = "✅" if all_ok else f"❌ {detail}"
+            progress_cb(i + 1, total, username, status_str)
+
+        # Rate-limit friendly delay between accounts
+        if i < total - 1:
+            time.sleep(random.uniform(delay_min, delay_max))
+
+    return {
+        "tweet_id": tweet_id,
+        "action": action,
+        "total": total,
+        "ok": ok_count,
+        "fail": fail_count,
+        "results": results,
+    }
 
 
 def get_auth_from_config() -> tuple:
