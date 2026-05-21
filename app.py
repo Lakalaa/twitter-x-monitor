@@ -321,6 +321,18 @@ def run_checks_sync(triggered_by="schedule"):
 
 # ─── Background scheduler ─────────────────────────────────────────────────────
 
+def _keepalive_ping():
+    """Ping own /health endpoint so Render free tier never idles out."""
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not render_url:
+        return  # not on Render, skip
+    try:
+        import urllib.request as _ur
+        _ur.urlopen(f"{render_url}/health", timeout=10)
+    except Exception:
+        pass  # ignore — just a best-effort ping
+
+
 def start_scheduler():
     config = load_config()
     interval = config.get("check_interval_minutes", 60)
@@ -328,6 +340,7 @@ def start_scheduler():
     STATE["running"] = True
     schedule.clear()
     schedule.every(interval).minutes.do(run_checks_sync)
+    schedule.every(10).minutes.do(_keepalive_ping)
     add_log(f"Scheduler started — every {interval} minutes")
     while STATE["running"]:
         schedule.run_pending()
