@@ -538,6 +538,9 @@ async def handle_telegram_commands():
                         "── Bulk Engagement (account pool) ──\n"
                         "/like <tweet_url> [count]\n"
                         "  Likes the tweet — count limits how many accounts (default: all)\n\n"
+                        "/retweet <tweet_url> [count]\n"
+                        "  Retweets/reshares the tweet — count limits how many accounts\n"
+                        "  Example: /retweet https://x.com/.../123 50\n\n"
                         "/comment <tweet_url> [count] [@mention] <text>\n"
                         "  Posts a comment — count limits how many accounts (default: all)\n"
                         "  Optional: start text with @username to mention someone\n"
@@ -1567,6 +1570,38 @@ async def handle_telegram_commands():
                                 ))
                         threading.Thread(target=_run_like, daemon=True).start()
 
+                # ── /retweet <tweet_url> [count] ─────────────────────────────
+                elif cmd == "/retweet":
+                    if not args:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /retweet <tweet_url> [count]\n"
+                            "  count — optional: how many accounts to retweet with (default: all)\n\n"
+                            "Examples:\n"
+                            "/retweet https://x.com/user/status/123\n"
+                            "/retweet https://x.com/user/status/123 50"
+                        ), disable_web_page_preview=True)
+                    else:
+                        rt_args2, rt_count2 = _parse_count(args)
+                        rt_url2 = rt_args2.split()[0]
+                        count_note = f" ({rt_count2} accounts)" if rt_count2 else " (all accounts)"
+                        await bot.send_message(chat_id=chat_id, text=f"🔁 Retweeting{count_note}…\n{rt_url2}", disable_web_page_preview=True)
+                        def _run_retweet(url=rt_url2, n=rt_count2):
+                            import sys as _sys; _sys.path.insert(0, "tools")
+                            from twitter_post import bulk_engage, load_account_pool
+                            pool = load_account_pool()
+                            if n: pool = pool[:n]
+                            result = bulk_engage(url, action="retweet", accounts=pool, delay_min=2.0, delay_max=6.0)
+                            if "error" in result:
+                                asyncio.run(tb.send_message(f"❌ Retweet failed: {result['error']}"))
+                            else:
+                                asyncio.run(tb.send_message(
+                                    f"🔁 Retweet complete!\n"
+                                    f"Tweet: {url}\n"
+                                    f"Accounts used: {result['total']}\n"
+                                    f"✅ {result['ok']} retweeted | ❌ {result['fail']} failed"
+                                ))
+                        threading.Thread(target=_run_retweet, daemon=True).start()
+
                 # ── /comment <tweet_url> [count] <text> ──────────────────────
                 elif cmd == "/comment":
                     cmt_args, cmt_count = _parse_count(args)
@@ -1868,8 +1903,8 @@ def api_engage():
 
     if not tweet_url:
         return jsonify({"ok": False, "error": "tweet_url is required"}), 400
-    if action not in ("like", "comment", "both"):
-        return jsonify({"ok": False, "error": "action must be like, comment, or both"}), 400
+    if action not in ("like", "comment", "both", "retweet"):
+        return jsonify({"ok": False, "error": "action must be like, comment, both, or retweet"}), 400
     if action in ("comment", "both") and not comment_text and not mention:
         return jsonify({"ok": False, "error": "comment_text or mention is required for comment/both"}), 400
 
