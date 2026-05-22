@@ -315,6 +315,121 @@ def bulk_engage(
     }
 
 
+def scrape_retweeters(tweet_id: str, auth_token: str, ct0: str,
+                      limit: int = 200, no_admins: bool = False) -> dict:
+    """
+    Fetch users who retweeted a tweet using Twitter's GraphQL API.
+    Returns {"ok": True, "users": [...usernames], "count": N}
+          | {"ok": False, "error": "..."}
+    """
+    _QID = "i-CI8t2pJD15euZJErEDrg"
+    _URL = f"https://x.com/i/api/graphql/{_QID}/Retweeters"
+    _FEATURES = json.dumps({
+        "rweb_tipjar_consumption_enabled": True,
+        "responsive_web_graphql_exclude_directive_enabled": True,
+        "verified_phone_label_enabled": False,
+        "creator_subscriptions_tweet_preview_api_enabled": True,
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+        "communities_web_enable_tweet_community_results_fetch": True,
+        "c9s_tweet_anatomy_moderator_badge_enabled": True,
+        "articles_preview_enabled": True,
+        "responsive_web_edit_tweet_api_enabled": True,
+        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+        "view_counts_everywhere_api_enabled": True,
+        "longform_notetweets_consumption_enabled": True,
+        "responsive_web_twitter_article_tweet_consumption_enabled": True,
+        "tweet_awards_web_tipping_enabled": False,
+        "creator_subscriptions_quote_tweet_preview_enabled": False,
+        "freedom_of_speech_not_reach_fetch_enabled": True,
+        "standardized_nudges_misinfo": True,
+        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+        "rweb_video_timestamps_enabled": True,
+        "longform_notetweets_rich_text_read_enabled": True,
+        "longform_notetweets_inline_media_enabled": True,
+        "responsive_web_enhance_cards_enabled": False,
+    })
+
+    hdrs = _headers(auth_token, ct0)
+    seen: set = set()
+    users: list = []
+    cursor = None
+
+    for _page in range(50):  # max 50 pages × 20 = 1000
+        variables = {"tweetId": str(tweet_id), "count": 20, "includePromotedContent": True}
+        if cursor:
+            variables["cursor"] = cursor
+
+        import urllib.request as _ur, urllib.parse as _up
+        params = _up.urlencode({"variables": json.dumps(variables), "features": _FEATURES})
+        req_url = f"{_URL}?{params}"
+
+        try:
+            if _HAS_CURL:
+                resp = _curl.get(req_url, headers=hdrs, impersonate="chrome124", timeout=30)
+                status, body = resp.status_code, resp.text
+            else:
+                req = _ur.Request(req_url, headers=hdrs)
+                with _ur.urlopen(req, timeout=30) as r:
+                    status, body = r.status, r.read().decode()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+        if status != 200:
+            return {"ok": False, "error": f"HTTP {status}: {body[:200]}"}
+
+        try:
+            data = json.loads(body)
+        except Exception:
+            return {"ok": False, "error": "Invalid JSON response"}
+
+        instructions = (
+            data.get("data", {})
+                .get("retweeters_timeline", {})
+                .get("timeline", {})
+                .get("instructions", [])
+        )
+
+        next_cursor = None
+        found_users = 0
+        for instr in instructions:
+            for entry in instr.get("entries", []):
+                eid = entry.get("entryId", "")
+                content = entry.get("content", {})
+
+                # User entry
+                if eid.startswith("user-"):
+                    legacy = (
+                        content.get("itemContent", {})
+                               .get("user_results", {})
+                               .get("result", {})
+                               .get("legacy", {})
+                    )
+                    screen_name = legacy.get("screen_name", "").strip()
+                    if not screen_name or screen_name.lower() in seen:
+                        continue
+                    # Skip verified if --no-admins
+                    if no_admins and (legacy.get("verified") or legacy.get("is_blue_verified")):
+                        continue
+                    seen.add(screen_name.lower())
+                    users.append(screen_name)
+                    found_users += 1
+
+                # Cursor entry
+                elif "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
+                    next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
+
+        if len(users) >= limit or not next_cursor or found_users == 0:
+            break
+        cursor = next_cursor
+
+    if not users:
+        return {"ok": True, "users": [], "count": 0, "message": "No retweeters found"}
+
+    users = users[:limit]
+    return {"ok": True, "users": users, "count": len(users)}
+
+
 def get_auth_from_config() -> tuple:
     """
     Return (auth_token, ct0) from tools/targets.json or env vars.
