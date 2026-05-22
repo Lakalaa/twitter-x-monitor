@@ -32,6 +32,11 @@ _LIKE_QUERY_IDS = [
     "ZYKSe-w7KEslx3JhSIk5LA",
 ]
 
+_RETWEET_QUERY_IDS = [
+    "ojPdsZsimiJrUGLR1sjUtA",
+    "uBbQzHBYhCNJYCXLECHLkQ",
+]
+
 
 def _headers(auth_token: str, ct0: str) -> dict:
     return {
@@ -187,6 +192,42 @@ def like_tweet(tweet_id: str, auth_token: str, ct0: str) -> dict:
     return {"ok": False, "error": last_error}
 
 
+def retweet_post(tweet_id: str, auth_token: str, ct0: str) -> dict:
+    """
+    Retweet a tweet.
+    Returns {"ok": True} or {"ok": False, "error": "..."}.
+    """
+    if not auth_token or not ct0:
+        return {"ok": False, "error": "Missing auth_token or ct0"}
+
+    headers = _headers(auth_token, ct0)
+    last_error = "No query IDs to try"
+
+    for query_id in _RETWEET_QUERY_IDS:
+        url = f"https://x.com/i/api/graphql/{query_id}/CreateRetweet"
+        payload = {
+            "variables": {"tweet_id": tweet_id, "dark_request": False},
+            "queryId": query_id,
+        }
+        try:
+            status, body = _http_post(url, payload, headers)
+            if status in (200, 201):
+                data = json.loads(body)
+                if data.get("data", {}).get("create_retweet"):
+                    return {"ok": True}
+                errors = data.get("errors", [])
+                last_error = errors[0].get("message", body[:200]) if errors else body[:200]
+                if "already" in last_error.lower() or "duplicate" in last_error.lower():
+                    return {"ok": True, "note": "already retweeted"}
+            else:
+                last_error = f"HTTP {status}: {body[:200]}"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(1)
+
+    return {"ok": False, "error": last_error}
+
+
 def extract_tweet_id(url_or_id: str) -> str:
     """Extract tweet ID from a URL like https://x.com/user/status/123456789 or return as-is."""
     s = url_or_id.strip().rstrip("/")
@@ -214,7 +255,7 @@ def load_account_pool(cookies_file: str = "tools/cookies.json") -> list:
 
 def bulk_engage(
     tweet_url: str,
-    action: str,            # "like", "comment", or "both"
+    action: str,            # "like", "comment", "both", or "retweet"
     comment_text: str = "",
     mention: str = "",      # @username to prepend to every comment
     accounts: list = None,  # subset of pool; if None, uses full pool
@@ -276,6 +317,10 @@ def bulk_engage(
         if action in ("like", "both"):
             res = like_tweet(tweet_id, auth_tok, ct0_val)
             entry_results.append(("like", res))
+
+        if action == "retweet":
+            res = retweet_post(tweet_id, auth_tok, ct0_val)
+            entry_results.append(("retweet", res))
 
         if action in ("comment", "both"):
             text = build_comment(comment_text)
