@@ -541,6 +541,11 @@ async def handle_telegram_commands():
                         "/retweet <tweet_url> [count]\n"
                         "  Retweets/reshares the tweet — count limits how many accounts\n"
                         "  Example: /retweet https://x.com/.../123 50\n\n"
+                        "/retweetpool <tweet_url>\n"
+                        "  Retweet a DIFFERENT post using the same count as saved list.\n"
+                        "  E.g. saved 150 retweeters → 150 pool accounts retweet target.\n"
+                        "  Run /scrape or /retweeters first to build the list.\n"
+                        "  Example: /retweetpool https://x.com/.../999\n\n"
                         "/comment <tweet_url> [count] [@mention] <text>\n"
                         "  Posts a comment — count limits how many accounts (default: all)\n"
                         "  Optional: start text with @username to mention someone\n"
@@ -1405,6 +1410,54 @@ async def handle_telegram_commands():
                                 ))
 
                             threading.Thread(target=_run_retweeters, daemon=True).start()
+
+                # ── /retweetpool <target_url> ─────────────────────────────────
+                elif cmd == "/retweetpool":
+                    rp_parts = args.strip().split() if args else []
+                    if not rp_parts:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /retweetpool <tweet_url>\n\n"
+                            "Retweets the target post using the same number of pool accounts\n"
+                            "as the currently saved users list.\n\n"
+                            "Example: /retweetpool https://x.com/user/status/999\n\n"
+                            "Run /scrape or /retweeters first to build the saved list."
+                        ), disable_web_page_preview=True)
+                    else:
+                        rp_url = rp_parts[0]
+                        save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+                        if not os.path.exists(save_path):
+                            await bot.send_message(chat_id=chat_id, text="❌ No saved users found. Run /scrape or /retweeters first.")
+                        else:
+                            try:
+                                with open(save_path) as _f:
+                                    _saved = json.load(_f)
+                                rp_count = len(_saved.get("users", []))
+                                rp_src = _saved.get("source", "")
+                            except Exception:
+                                rp_count = 0; rp_src = ""
+                            if rp_count == 0:
+                                await bot.send_message(chat_id=chat_id, text="❌ Saved users list is empty. Run /scrape or /retweeters first.")
+                            else:
+                                await bot.send_message(
+                                    chat_id=chat_id,
+                                    text=f"🔁 Retweeting post with {rp_count} pool accounts…\nTarget: {rp_url}",
+                                    disable_web_page_preview=True
+                                )
+                                def _run_retweetpool(url=rp_url, n=rp_count):
+                                    import sys as _sys; _sys.path.insert(0, "tools")
+                                    from twitter_post import bulk_engage, load_account_pool
+                                    pool = load_account_pool()
+                                    if n: pool = pool[:n]
+                                    result = bulk_engage(url, action="retweet", accounts=pool, delay_min=2.0, delay_max=6.0)
+                                    if "error" in result:
+                                        asyncio.run(tb.send_message(f"❌ Retweet failed: {result['error']}"))
+                                    else:
+                                        asyncio.run(tb.send_message(
+                                            f"🔁 Done! Retweeted post with {result['total']} accounts.\n"
+                                            f"✅ {result['ok']} retweeted | ❌ {result['fail']} failed\n"
+                                            f"Target: {url}"
+                                        ))
+                                threading.Thread(target=_run_retweetpool, daemon=True).start()
 
                 # ── /tagusers <target_url> [count] [--no-admins] ─────────────
                 elif cmd == "/tagusers":
