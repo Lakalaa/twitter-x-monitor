@@ -521,8 +521,13 @@ async def handle_telegram_commands():
                         "  Run this first, then use /tagusers whenever you're ready.\n"
                         "  --no-admins = skip verified/blue-tick accounts\n"
                         "  Example: /scrape https://x.com/user/status/123\n\n"
+                        "/retweeters <tweet_url> [count] [--no-admins]\n"
+                        "  Scrapes users who RETWEETED/RESHARED a post and saves them.\n"
+                        "  count = max retweeters to fetch (default: 200)\n"
+                        "  --no-admins = skip verified/blue-tick accounts\n"
+                        "  Example: /retweeters https://x.com/user/status/123 500\n\n"
                         "/tagusers <target_url> [count] [--no-admins]\n"
-                        "  Tags the users saved by /scrape — 5 per reply — under target.\n"
+                        "  Tags the users saved by /scrape or /retweeters — 5 per reply.\n"
                         "  count = max users to tag (default: all saved)\n"
                         "  Each reply: @user1 @user2 @user3 @user4 @user5\n"
                         "  Posts 1 reply every 8s (Twitter rate limit)\n"
@@ -1335,6 +1340,69 @@ async def handle_telegram_commands():
 
                         threading.Thread(target=_run_scrape, daemon=True).start()
 
+                # ── /retweeters <tweet_url> [count] [--no-admins] ────────────
+                elif cmd == "/retweeters":
+                    raw_rt_args, skip_admins_rt = _parse_no_admins(args)
+                    raw_rt_args, rt_count = _parse_count(raw_rt_args)
+                    rt_parts = raw_rt_args.strip().split()
+                    if not rt_parts:
+                        await bot.send_message(chat_id=chat_id, text=(
+                            "Usage: /retweeters <tweet_url> [count] [--no-admins]\n\n"
+                            "Scrapes users who retweeted a post and saves their usernames.\n"
+                            "Then use /tagusers to tag them under any post.\n\n"
+                            "Options:\n"
+                            "  count        max retweeters to fetch (default: 200)\n"
+                            "  --no-admins  skip verified/blue-tick accounts\n\n"
+                            "Examples:\n"
+                            "/retweeters https://x.com/user/status/123\n"
+                            "/retweeters https://x.com/user/status/123 500 --no-admins"
+                        ), disable_web_page_preview=True)
+                    else:
+                        import re as _re3
+                        rt_url   = rt_parts[0]
+                        rt_limit = rt_count or 200
+                        m3 = _re3.search(r"(?:x|twitter)\.com/[^/]+/status/(\d+)", rt_url)
+                        rt_tid = m3.group(1) if m3 else ""
+                        if not rt_tid:
+                            await bot.send_message(chat_id=chat_id, text=f"❌ Could not parse tweet ID from: {rt_url}", disable_web_page_preview=True)
+                        else:
+                            filter_note = " | skipping verified" if skip_admins_rt else ""
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text=f"🔁 Fetching up to {rt_limit} retweeters from:\n{rt_url}{filter_note}\n\nWill save usernames for use with /tagusers",
+                                disable_web_page_preview=True
+                            )
+
+                            def _run_retweeters(tid=rt_tid, url=rt_url, lim=rt_limit, skip=skip_admins_rt):
+                                import sys as _sys, json as _json2
+                                _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                                from twitter_post import scrape_retweeters as _sr, get_auth_from_config as _gac
+                                auth_token, ct0 = _gac()
+                                if not auth_token or not ct0:
+                                    asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set. Add them in Settings tab."))
+                                    return
+                                result = _sr(tid, auth_token, ct0, limit=lim, no_admins=skip)
+                                if not result.get("ok"):
+                                    asyncio.run(tb.send_message(f"❌ Error fetching retweeters: {result.get('error','Unknown')}"))
+                                    return
+                                users = result.get("users", [])
+                                if not users:
+                                    asyncio.run(tb.send_message("⚠️ No retweeters found (tweet may have 0 retweets or auth is expired)."))
+                                    return
+                                save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+                                with open(save_path, "w") as _f:
+                                    _json2.dump({"source": f"retweeters:{url}", "users": users}, _f, indent=2)
+                                admin_note = " (verified skipped)" if skip else ""
+                                add_log(f"Retweeters bot: saved {len(users)} users from tweet {tid}")
+                                asyncio.run(tb.send_message(
+                                    f"✅ Saved {len(users):,} retweeters{admin_note}.\n"
+                                    f"Source: {url}\n\n"
+                                    f"Now run /tagusers to tag them under any post.\n"
+                                    f"Example: /tagusers https://x.com/yourprofile/status/999"
+                                ))
+
+                            threading.Thread(target=_run_retweeters, daemon=True).start()
+
                 # ── /tagusers <target_url> [count] [--no-admins] ─────────────
                 elif cmd == "/tagusers":
                     raw_tu_args, skip_admins_tu = _parse_no_admins(args)
@@ -2054,6 +2122,71 @@ def api_scrape_saved():
         return jsonify({"count": len(data.get("users", [])), "source": data.get("source", ""), "users": data.get("users", [])[:10]})
     except Exception:
         return jsonify({"count": 0, "source": None, "users": []})
+
+
+@app.route("/api/retweeters", methods=["POST"])
+def api_retweeters():
+    data      = request.json or {}
+    tweet_url = data.get("tweet_url", "").strip()
+    no_admins = bool(data.get("no_admins", False))
+    limit     = data.get("limit", 200)
+    try: limit = int(limit)
+    except (ValueError, TypeError): limit = 200
+    if not tweet_url:
+        return jsonify({"ok": False, "error": "tweet_url is required"}), 400
+
+    import uuid, re as _re2
+    m = _re2.search(r"(?:x|twitter)\.com/[^/]+/status/(\d+)", tweet_url)
+    tweet_id = m.group(1) if m else ""
+    if not tweet_id:
+        return jsonify({"ok": False, "error": "Could not parse tweet ID from URL"}), 400
+
+    job_id = uuid.uuid4().hex[:8]
+    STATE.setdefault("retweet_jobs", {})[job_id] = {
+        "status": "running", "count": 0, "source": tweet_url,
+        "started_at": datetime.now().isoformat(), "finished_at": None,
+        "message": "Fetching retweeters…"
+    }
+
+    def _run(jid=job_id, tid=tweet_id, url=tweet_url, skip=no_admins, lim=limit):
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        from twitter_post import scrape_retweeters as _sr, get_auth_from_config as _gac
+        job = STATE["retweet_jobs"][jid]
+
+        auth_token, ct0 = _gac()
+        if not auth_token or not ct0:
+            job.update({"status": "error", "message": "❌ No Twitter auth_token/ct0 set — add them in Settings"}); return
+
+        result = _sr(tid, auth_token, ct0, limit=lim, no_admins=skip)
+        if not result.get("ok"):
+            job.update({"status": "error", "message": f"❌ {result.get('error', 'Unknown error')}"}); return
+
+        users = result.get("users", [])
+        if not users:
+            job.update({"status": "done", "count": 0, "message": "⚠️ No retweeters found (tweet may have 0 retweets or auth is expired)"}); return
+
+        save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+        with open(save_path, "w") as f:
+            json.dump({"source": f"retweeters:{url}", "users": users}, f, indent=2)
+
+        add_log(f"Retweeters: saved {len(users)} users from tweet {tid}")
+        job.update({
+            "status": "done", "count": len(users), "source": url,
+            "finished_at": datetime.now().isoformat(),
+            "message": f"✅ Saved {len(users)} retweeters"
+        })
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/retweeters/<job_id>")
+def api_retweeters_status(job_id):
+    job = STATE.get("retweet_jobs", {}).get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
 
 
 @app.route("/api/tagusers", methods=["POST"])
