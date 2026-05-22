@@ -471,10 +471,28 @@
       <!-- Step 1 -->
       <div style="background:#0a0c12;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-bottom:14px">
         <div style="font-size:13px;font-weight:600;color:#60a5fa;margin-bottom:12px">Step 1 — Scrape &amp; Save Users</div>
+
+        <!-- Source toggle -->
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button onclick="setScrapeMode('replies')" id="sc-mode-replies"
+            style="flex:1;padding:8px 0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:2px solid #0ea5e9;background:#0ea5e9;color:#fff">
+            💬 Repliers
+          </button>
+          <button onclick="setScrapeMode('retweeters')" id="sc-mode-retweeters"
+            style="flex:1;padding:8px 0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:2px solid #374151;background:transparent;color:#9ca3af">
+            🔁 Retweeters
+          </button>
+        </div>
+
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:1;min-width:200px">
-            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL to scrape repliers from</label>
+            <label id="sc-url-label" style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL to scrape repliers from</label>
             <input id="sc-tweet-url" type="text" placeholder="https://x.com/user/status/123456789"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div id="sc-limit-wrap" style="flex:0 0 110px;display:none">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Max retweeters</label>
+            <input id="sc-rt-limit" type="number" min="1" max="1000" placeholder="200"
               style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
           </div>
           <div style="flex:0 0 auto">
@@ -482,7 +500,7 @@
               <input type="checkbox" id="sc-no-admins" style="accent-color:#3b82f6;width:15px;height:15px">
               Skip verified
             </label>
-            <button onclick="startScrape()" id="sc-btn"
+            <button onclick="startScrapeDispatch()" id="sc-btn"
               style="background:#0ea5e9;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap">
               🔍 Scrape &amp; Save
             </button>
@@ -611,8 +629,9 @@
         <div class="cmd"><code>/replies &lt;url&gt; [--no-admins]</code><div class="desc">Scrape all replies to a tweet — each reply shows the commenter's account and their message. Add <strong>--no-admins</strong> to skip verified/blue-tick accounts.</div></div>
         <div class="cmd"><code>/mirror &lt;source_url&gt; &lt;target_url&gt; [--no-admins]</code><div class="desc">Scrape all replies from source tweet and post each one as a comment on target tweet. Add <strong>--no-admins</strong> to skip verified accounts. Rate-limited to 1 post every 8 seconds.</div></div>
         <div class="cmd"><code>/replyall &lt;url&gt; [count] [--no-admins] [@mention] &lt;text&gt;</code><div class="desc">Scrapes every reply under a tweet, then replies back to each commenter using your accounts (rotating). <strong>count</strong> = how many accounts to use (default: all). <strong>--no-admins</strong> = skip verified accounts. Example: <em>/replyall https://x.com/.../123 50 --no-admins Thanks! 🙌</em></div></div>
-        <div class="cmd"><code>/scrape &lt;tweet_url&gt; [--no-admins]</code><div class="desc"><strong>Step 1:</strong> Scrapes all repliers from a tweet and saves their usernames. Add <strong>--no-admins</strong> to skip verified/blue-tick accounts. Run this first, then use /tagusers whenever you're ready. Example: <em>/scrape https://x.com/user/status/123 --no-admins</em></div></div>
-        <div class="cmd"><code>/tagusers &lt;target_url&gt; [count] [--no-admins]</code><div class="desc"><strong>Step 2:</strong> Tags the users saved by /scrape — <strong>5 per reply</strong> — as replies under the target tweet. <strong>count</strong> = max users to tag. Each reply looks like: <em>@user1 @user2 @user3 @user4 @user5</em>. Example: <em>/tagusers https://x.com/yourprofile/status/999 50</em></div></div>
+        <div class="cmd"><code>/scrape &lt;tweet_url&gt; [--no-admins]</code><div class="desc"><strong>Step 1a — Repliers:</strong> Scrapes all repliers from a tweet and saves their usernames. Add <strong>--no-admins</strong> to skip verified/blue-tick accounts. Run this first, then use /tagusers whenever you're ready. Example: <em>/scrape https://x.com/user/status/123 --no-admins</em></div></div>
+        <div class="cmd"><code>/retweeters &lt;tweet_url&gt; [count] [--no-admins]</code><div class="desc"><strong>Step 1b — Retweeters:</strong> Scrapes users who <strong>retweeted/reshared</strong> a post (the reshare count shown on the tweet) and saves them. <strong>count</strong> = max retweeters to fetch (default 200). Then use /tagusers to tag them. Example: <em>/retweeters https://x.com/user/status/123 500 --no-admins</em></div></div>
+        <div class="cmd"><code>/tagusers &lt;target_url&gt; [count] [--no-admins]</code><div class="desc"><strong>Step 2:</strong> Tags the users saved by /scrape or /retweeters — <strong>5 per reply</strong> — as replies under the target tweet. <strong>count</strong> = max users to tag. Each reply looks like: <em>@user1 @user2 @user3 @user4 @user5</em>. Example: <em>/tagusers https://x.com/yourprofile/status/999 50</em></div></div>
         <div class="cmd"><code>/tag &lt;source_url&gt; &lt;target_url&gt; [count] [--no-admins]</code><div class="desc">Shortcut: scrape + tag in one step. Both URLs in one command. Example: <em>/tag https://x.com/src/111 https://x.com/tgt/222 50</em></div></div>
         <div class="cmd"><code>/complaints your brand</code><div class="desc">Search complaint tweets about any topic (last 7 days)</div></div>
         <div class="cmd"><code>/status</code><div class="desc">Show which accounts are tracked + last/next check times</div></div>
@@ -810,6 +829,34 @@ async function loadSavedUsers() {
 }
 loadSavedUsers();
 
+let _scrapeMode = 'replies';
+function setScrapeMode(mode) {
+  _scrapeMode = mode;
+  const rBtn = document.getElementById('sc-mode-replies');
+  const tBtn = document.getElementById('sc-mode-retweeters');
+  const lWrap = document.getElementById('sc-limit-wrap');
+  const lbl   = document.getElementById('sc-url-label');
+  const btn   = document.getElementById('sc-btn');
+  if (mode === 'replies') {
+    rBtn.style.background = '#0ea5e9'; rBtn.style.color = '#fff'; rBtn.style.borderColor = '#0ea5e9';
+    tBtn.style.background = 'transparent'; tBtn.style.color = '#9ca3af'; tBtn.style.borderColor = '#374151';
+    lWrap.style.display = 'none';
+    lbl.textContent = 'Tweet URL to scrape repliers from';
+    btn.textContent = '🔍 Scrape & Save';
+  } else {
+    tBtn.style.background = '#8b5cf6'; tBtn.style.color = '#fff'; tBtn.style.borderColor = '#8b5cf6';
+    rBtn.style.background = 'transparent'; rBtn.style.color = '#9ca3af'; rBtn.style.borderColor = '#374151';
+    lWrap.style.display = '';
+    lbl.textContent = 'Tweet URL (paste the post with the retweet count)';
+    btn.textContent = '🔁 Scrape & Save';
+  }
+}
+
+function startScrapeDispatch() {
+  if (_scrapeMode === 'retweeters') startRetweeters();
+  else startScrape();
+}
+
 async function startScrape() {
   const url      = document.getElementById('sc-tweet-url').value.trim();
   const noAdmins = document.getElementById('sc-no-admins').checked;
@@ -852,6 +899,61 @@ async function pollScJob() {
       savedEl.style.display = '';
       savedEl.textContent = `✅ ${job.count} users saved — ready for Step 2`;
       loadSavedUsers();
+    } else {
+      statusEl.style.color = '#f87171';
+    }
+  }
+}
+
+let rtJobId = null, rtPollInterval = null;
+async function startRetweeters() {
+  const url      = document.getElementById('sc-tweet-url').value.trim();
+  const noAdmins = document.getElementById('sc-no-admins').checked;
+  const limit    = parseInt(document.getElementById('sc-rt-limit').value) || 200;
+  if (!url) { alert('Please enter a tweet URL'); return; }
+
+  const btn = document.getElementById('sc-btn');
+  btn.disabled = true; btn.textContent = '⏳ Fetching retweeters…';
+  const statusEl = document.getElementById('sc-status');
+  const savedEl  = document.getElementById('sc-saved-info');
+  statusEl.style.display = ''; statusEl.textContent = '⏳ Fetching retweeters…';
+  statusEl.style.color = '#9ca3af';
+  savedEl.style.display = 'none';
+
+  const res = await fetch('/api/retweeters', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ tweet_url: url, no_admins: noAdmins, limit })
+  }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
+
+  if (!res.ok) {
+    statusEl.textContent = '❌ ' + (res.error || 'Unknown error');
+    statusEl.style.color = '#f87171';
+    btn.disabled = false; btn.textContent = '🔁 Scrape & Save'; return;
+  }
+  rtJobId = res.job_id;
+  if (rtPollInterval) clearInterval(rtPollInterval);
+  rtPollInterval = setInterval(pollRtJob, 2000);
+  pollRtJob();
+}
+
+async function pollRtJob() {
+  if (!rtJobId) return;
+  const job = await fetch('/api/retweeters/' + rtJobId).then(r => r.json()).catch(() => null);
+  if (!job) return;
+  const statusEl = document.getElementById('sc-status');
+  const savedEl  = document.getElementById('sc-saved-info');
+  statusEl.textContent = job.message || '⏳ Fetching retweeters…';
+  if (job.status === 'done' || job.status === 'error') {
+    clearInterval(rtPollInterval); rtPollInterval = null;
+    const btn = document.getElementById('sc-btn');
+    btn.disabled = false; btn.textContent = '🔁 Scrape & Save';
+    if (job.status === 'done' && job.count > 0) {
+      savedEl.style.display = '';
+      savedEl.textContent = `✅ ${job.count} retweeters saved — ready for Step 2`;
+      statusEl.style.color = '#9ca3af';
+      loadSavedUsers();
+    } else if (job.status === 'done') {
+      statusEl.style.color = '#fbbf24';
     } else {
       statusEl.style.color = '#f87171';
     }
