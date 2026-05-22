@@ -514,7 +514,7 @@
       </div>
 
       <!-- Step 2 -->
-      <div style="background:#0a0c12;border:1px solid #2a2d3a;border-radius:10px;padding:16px">
+      <div style="background:#0a0c12;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-bottom:14px">
         <div style="font-size:13px;font-weight:600;color:#34d399;margin-bottom:12px">Step 2 — Tag Saved Users Under a Post</div>
         <div id="tu-saved-preview" style="font-size:13px;color:#6b7280;margin-bottom:12px">Loading saved users…</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
@@ -539,6 +539,29 @@
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div style="background:#0a0c12;border:1px solid #4c1d95;border-radius:10px;padding:16px">
+        <div style="font-size:13px;font-weight:600;color:#a78bfa;margin-bottom:6px">Step 3 — Retweet Another Post Using Saved Count</div>
+        <div style="font-size:12px;color:#6b7280;margin-bottom:12px">
+          Uses the same number of pool accounts as saved users (e.g. 150 saved → 150 accounts retweet Post B).
+        </div>
+        <div id="rp-saved-info" style="font-size:13px;color:#a78bfa;margin-bottom:12px">Loading…</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL to retweet (Post B)</label>
+            <input id="rp-target-url" type="text" placeholder="https://x.com/user/status/999"
+              style="width:100%;background:#1a1d27;border:1px solid #4c1d95;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 auto">
+            <button onclick="startRetweetPool()" id="rp-btn"
+              style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;margin-top:22px">
+              🔁 Retweet with Saved Count
+            </button>
+          </div>
+        </div>
+        <div id="rp-status" style="margin-top:12px;font-size:13px;color:#6b7280;display:none"></div>
       </div>
     </div>
     <div class="card" id="tu-progress-card" style="display:none">
@@ -638,6 +661,7 @@
         <div class="cmd"><code>/tag &lt;source_url&gt; &lt;target_url&gt; [count] [--no-admins]</code><div class="desc">Shortcut: scrape + tag in one step. Both URLs in one command. Example: <em>/tag https://x.com/src/111 https://x.com/tgt/222 50</em></div></div>
         <div class="cmd"><code>/like &lt;tweet_url&gt; [count]</code><div class="desc">Like a tweet using your account pool. <strong>count</strong> = how many accounts to use (default: all 200). Example: <em>/like https://x.com/user/status/123 50</em></div></div>
         <div class="cmd"><code>/retweet &lt;tweet_url&gt; [count]</code><div class="desc">Retweet/reshare a post using your account pool — boosts the retweet count shown on the tweet. <strong>count</strong> = how many accounts to use (default: all). Example: <em>/retweet https://x.com/user/status/123 50</em></div></div>
+        <div class="cmd"><code>/retweetpool &lt;tweet_url&gt;</code><div class="desc">Retweet a <strong>different post</strong> using the same number of accounts as the currently saved users list. Example: scrape 150 retweeters from Post A → run <em>/retweetpool https://x.com/user/status/999</em> → 150 pool accounts retweet Post B.</div></div>
         <div class="cmd"><code>/comment &lt;tweet_url&gt; [count] [@mention] &lt;text&gt;</code><div class="desc">Post a comment on a tweet using your account pool. <strong>count</strong> = how many accounts (default: all). Optional: start text with @username to mention someone. Example: <em>/comment https://x.com/.../123 50 @elonmusk great!</em></div></div>
         <div class="cmd"><code>/engage &lt;tweet_url&gt; [count] [@mention] &lt;text&gt;</code><div class="desc">Like + comment on a tweet simultaneously using all accounts. Example: <em>/engage https://x.com/.../123 Amazing project! 🔥</em></div></div>
         <div class="cmd"><code>/complaints your brand</code><div class="desc">Search complaint tweets about any topic (last 7 days)</div></div>
@@ -973,6 +997,56 @@ async function pollRtJob() {
   }
 }
 
+async function startRetweetPool() {
+  const targetUrl = document.getElementById('rp-target-url').value.trim();
+  if (!targetUrl) { alert('Please enter the tweet URL to retweet (Post B)'); return; }
+
+  const btn = document.getElementById('rp-btn');
+  const statusEl = document.getElementById('rp-status');
+  btn.disabled = true; btn.textContent = '⏳ Starting…';
+  statusEl.style.display = ''; statusEl.style.color = '#9ca3af';
+  statusEl.textContent = '⏳ Loading saved users count…';
+
+  const saved = await fetch('/api/scrape/saved').then(r => r.json()).catch(() => null);
+  if (!saved || saved.count === 0) {
+    statusEl.textContent = '❌ No saved users — run Step 1 first to scrape retweeters or repliers.';
+    statusEl.style.color = '#f87171';
+    btn.disabled = false; btn.textContent = '🔁 Retweet with Saved Count'; return;
+  }
+
+  statusEl.textContent = `⏳ Retweeting with ${saved.count} pool accounts…`;
+
+  const body = { tweet_url: targetUrl, action: 'retweet', count: saved.count };
+  const res = await fetch('/api/engage', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
+
+  if (!res.ok) {
+    statusEl.textContent = '❌ ' + (res.error || 'Unknown error');
+    statusEl.style.color = '#f87171';
+    btn.disabled = false; btn.textContent = '🔁 Retweet with Saved Count'; return;
+  }
+
+  const jobId = res.job_id;
+  const poll = setInterval(async () => {
+    const job = await fetch('/api/engage/' + jobId).then(r => r.json()).catch(() => null);
+    if (!job) return;
+    statusEl.textContent = `⏳ ${job.done || 0} / ${job.total || saved.count} accounts retweeted…`;
+    if (job.status === 'done' || job.status === 'error') {
+      clearInterval(poll);
+      btn.disabled = false; btn.textContent = '🔁 Retweet with Saved Count';
+      if (job.status === 'done') {
+        statusEl.style.color = '#6ee7b7';
+        statusEl.textContent = `✅ Done! ${job.ok} retweeted | ❌ ${job.fail} failed (out of ${job.total} accounts)`;
+      } else {
+        statusEl.style.color = '#f87171';
+        statusEl.textContent = '❌ ' + (job.error || 'Failed');
+      }
+    }
+  }, 2000);
+}
+
 async function startTagUsers() {
   const targetUrl = document.getElementById('tu-target-url').value.trim();
   const count     = document.getElementById('tu-count').value.trim();
@@ -1122,6 +1196,20 @@ async function loadSavedUsers() {
     } else {
       banner.style.display = 'none';
       noBanner.style.display = '';
+    }
+  }
+
+  // ── Engage tab: Step 3 retweet-pool info ──────────────────────────────────
+  const rpEl = document.getElementById('rp-saved-info');
+  if (rpEl) {
+    if (!d || d.count === 0) {
+      rpEl.innerHTML = '<span style="color:#6b7280">No saved users yet — run Step 1 first.</span>';
+    } else {
+      const src = d.source || '';
+      const isRt = src.startsWith('retweeters:');
+      rpEl.innerHTML = `<span style="color:#a78bfa">🔁 ${d.count.toLocaleString()} saved users` +
+        (isRt ? ' (from retweeters)' : ' (from repliers)') +
+        `</span> — will use <strong style="color:#fff">${d.count}</strong> pool accounts to retweet`;
     }
   }
 
