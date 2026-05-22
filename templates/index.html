@@ -340,13 +340,16 @@
           <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Action</label>
           <div style="display:flex;gap:16px;flex-wrap:wrap">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:#d1d5db">
-              <input type="radio" name="eng-action" value="like" checked style="accent-color:#3b82f6"> ❤️ Like only
+              <input type="radio" name="eng-action" value="like" checked onchange="onEngActionChange()" style="accent-color:#3b82f6"> ❤️ Like only
             </label>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:#d1d5db">
-              <input type="radio" name="eng-action" value="comment" style="accent-color:#3b82f6"> 💬 Comment only
+              <input type="radio" name="eng-action" value="comment" onchange="onEngActionChange()" style="accent-color:#3b82f6"> 💬 Comment only
             </label>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:#d1d5db">
-              <input type="radio" name="eng-action" value="both" style="accent-color:#3b82f6"> 🚀 Like + Comment
+              <input type="radio" name="eng-action" value="both" onchange="onEngActionChange()" style="accent-color:#3b82f6"> 🚀 Like + Comment
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:#d1d5db">
+              <input type="radio" name="eng-action" value="retweet" onchange="onEngActionChange()" style="accent-color:#8b5cf6"> 🔁 Retweet
             </label>
           </div>
         </div>
@@ -633,6 +636,10 @@
         <div class="cmd"><code>/retweeters &lt;tweet_url&gt; [count] [--no-admins]</code><div class="desc"><strong>Step 1b — Retweeters:</strong> Scrapes users who <strong>retweeted/reshared</strong> a post (the reshare count shown on the tweet) and saves them. <strong>count</strong> = max retweeters to fetch (default 200). Then use /tagusers to tag them. Example: <em>/retweeters https://x.com/user/status/123 500 --no-admins</em></div></div>
         <div class="cmd"><code>/tagusers &lt;target_url&gt; [count] [--no-admins]</code><div class="desc"><strong>Step 2:</strong> Tags the users saved by /scrape or /retweeters — <strong>5 per reply</strong> — as replies under the target tweet. <strong>count</strong> = max users to tag. Each reply looks like: <em>@user1 @user2 @user3 @user4 @user5</em>. Example: <em>/tagusers https://x.com/yourprofile/status/999 50</em></div></div>
         <div class="cmd"><code>/tag &lt;source_url&gt; &lt;target_url&gt; [count] [--no-admins]</code><div class="desc">Shortcut: scrape + tag in one step. Both URLs in one command. Example: <em>/tag https://x.com/src/111 https://x.com/tgt/222 50</em></div></div>
+        <div class="cmd"><code>/like &lt;tweet_url&gt; [count]</code><div class="desc">Like a tweet using your account pool. <strong>count</strong> = how many accounts to use (default: all 200). Example: <em>/like https://x.com/user/status/123 50</em></div></div>
+        <div class="cmd"><code>/retweet &lt;tweet_url&gt; [count]</code><div class="desc">Retweet/reshare a post using your account pool — boosts the retweet count shown on the tweet. <strong>count</strong> = how many accounts to use (default: all). Example: <em>/retweet https://x.com/user/status/123 50</em></div></div>
+        <div class="cmd"><code>/comment &lt;tweet_url&gt; [count] [@mention] &lt;text&gt;</code><div class="desc">Post a comment on a tweet using your account pool. <strong>count</strong> = how many accounts (default: all). Optional: start text with @username to mention someone. Example: <em>/comment https://x.com/.../123 50 @elonmusk great!</em></div></div>
+        <div class="cmd"><code>/engage &lt;tweet_url&gt; [count] [@mention] &lt;text&gt;</code><div class="desc">Like + comment on a tweet simultaneously using all accounts. Example: <em>/engage https://x.com/.../123 Amazing project! 🔥</em></div></div>
         <div class="cmd"><code>/complaints your brand</code><div class="desc">Search complaint tweets about any topic (last 7 days)</div></div>
         <div class="cmd"><code>/status</code><div class="desc">Show which accounts are tracked + last/next check times</div></div>
         <div class="cmd"><code>/help</code><div class="desc">Show all commands</div></div>
@@ -670,16 +677,22 @@ function showTab(name) {
 let engJobId = null;
 let engPollInterval = null;
 
-function initEngageTab() {
-  document.querySelectorAll('input[name="eng-action"]').forEach(r => {
-    r.addEventListener('change', () => {
-      const action = document.querySelector('input[name="eng-action"]:checked').value;
-      document.getElementById('eng-comment-fields').style.display = action === 'like' ? 'none' : '';
-    });
-  });
-  // Set initial visibility
+function onEngActionChange() {
   const action = document.querySelector('input[name="eng-action"]:checked').value;
-  document.getElementById('eng-comment-fields').style.display = action === 'like' ? 'none' : '';
+  const hideComments = (action === 'like' || action === 'retweet');
+  document.getElementById('eng-comment-fields').style.display = hideComments ? 'none' : '';
+  const btn = document.getElementById('eng-btn');
+  if (action === 'retweet') {
+    btn.style.background = '#8b5cf6';
+    btn.textContent = '🔁 Start Retweet';
+  } else {
+    btn.style.background = '#3b82f6';
+    btn.textContent = '🚀 Start Engagement';
+  }
+}
+
+function initEngageTab() {
+  onEngActionChange();
 }
 
 async function startEngage() {
@@ -690,7 +703,7 @@ async function startEngage() {
   const count   = document.getElementById('eng-count').value.trim();
 
   if (!url) { alert('Please enter a tweet URL'); return; }
-  if (action !== 'like' && !comment && !mention) { alert('Please enter a comment or @mention'); return; }
+  if (action !== 'like' && action !== 'retweet' && !comment && !mention) { alert('Please enter a comment or @mention'); return; }
 
   const btn = document.getElementById('eng-btn');
   btn.disabled = true;
