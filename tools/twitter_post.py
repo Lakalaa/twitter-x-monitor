@@ -37,6 +37,44 @@ _RETWEET_QUERY_IDS = [
     "uBbQzHBYhCNJYCXLECHLkQ",
 ]
 
+_RETWEETERS_QUERY_IDS = [
+    "i-CI8t2pJD15euZJErEDrg",
+    "ojPdsZsimiJrUGLR1sjUtA",
+    "UFet4wFN5PH5WyAHqUZpeg",
+]
+
+_TWEETDETAIL_QUERY_IDS = [
+    "VWFGPVAGkZMGRKGe3GFFnA",
+    "nBS-WpgA6ZG0CyNHD517JQ",
+    "BoHLKeBvibdYDiJON1oqTg",
+]
+
+_SCRAPE_FEATURES = json.dumps({
+    "rweb_tipjar_consumption_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "verified_phone_label_enabled": False,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "articles_preview_enabled": True,
+    "responsive_web_edit_tweet_api_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "tweet_awards_web_tipping_enabled": False,
+    "creator_subscriptions_quote_tweet_preview_enabled": False,
+    "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "rweb_video_timestamps_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "longform_notetweets_inline_media_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+})
+
 
 def _headers(auth_token: str, ct0: str) -> dict:
     return {
@@ -54,7 +92,42 @@ def _headers(auth_token: str, ct0: str) -> dict:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0.0.0 Safari/537.36"
         ),
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
     }
+
+
+def _http_get(url: str, headers: dict, retries: int = 3) -> tuple:
+    """
+    GET request with retry on 429 / transient network errors.
+    Returns (status_code, body_text).
+    """
+    import urllib.request as _ur
+    last_err = "No attempts made"
+    for attempt in range(retries):
+        try:
+            if _HAS_CURL:
+                resp = _curl.get(url, headers=headers, impersonate="chrome124", timeout=30)
+                if resp.status_code == 429:
+                    wait = 15 * (attempt + 1)
+                    time.sleep(wait)
+                    continue
+                return resp.status_code, resp.text
+            else:
+                req = _ur.Request(url, headers=headers)
+                with _ur.urlopen(req, timeout=30) as r:
+                    return r.status, r.read().decode()
+        except Exception as exc:
+            last_err = str(exc)
+            if attempt < retries - 1:
+                time.sleep(4 * (attempt + 1))
+    return 0, last_err
 
 
 def _http_post(url: str, payload: dict, headers: dict) -> tuple:
@@ -364,112 +437,249 @@ def scrape_retweeters(tweet_id: str, auth_token: str, ct0: str,
                       limit: int = 200, no_admins: bool = False) -> dict:
     """
     Fetch users who retweeted a tweet using Twitter's GraphQL API.
+    Tries multiple query IDs with retry on 429.
     Returns {"ok": True, "users": [...usernames], "count": N}
           | {"ok": False, "error": "..."}
     """
-    _QID = "i-CI8t2pJD15euZJErEDrg"
-    _URL = f"https://x.com/i/api/graphql/{_QID}/Retweeters"
-    _FEATURES = json.dumps({
-        "rweb_tipjar_consumption_enabled": True,
-        "responsive_web_graphql_exclude_directive_enabled": True,
-        "verified_phone_label_enabled": False,
-        "creator_subscriptions_tweet_preview_api_enabled": True,
-        "responsive_web_graphql_timeline_navigation_enabled": True,
-        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-        "communities_web_enable_tweet_community_results_fetch": True,
-        "c9s_tweet_anatomy_moderator_badge_enabled": True,
-        "articles_preview_enabled": True,
-        "responsive_web_edit_tweet_api_enabled": True,
-        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-        "view_counts_everywhere_api_enabled": True,
-        "longform_notetweets_consumption_enabled": True,
-        "responsive_web_twitter_article_tweet_consumption_enabled": True,
-        "tweet_awards_web_tipping_enabled": False,
-        "creator_subscriptions_quote_tweet_preview_enabled": False,
-        "freedom_of_speech_not_reach_fetch_enabled": True,
-        "standardized_nudges_misinfo": True,
-        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-        "rweb_video_timestamps_enabled": True,
-        "longform_notetweets_rich_text_read_enabled": True,
-        "longform_notetweets_inline_media_enabled": True,
-        "responsive_web_enhance_cards_enabled": False,
-    })
+    import urllib.parse as _up
 
     hdrs = _headers(auth_token, ct0)
-    seen: set = set()
-    users: list = []
-    cursor = None
+    last_error = "All query IDs failed"
 
-    for _page in range(50):  # max 50 pages × 20 = 1000
-        variables = {"tweetId": str(tweet_id), "count": 20, "includePromotedContent": True}
-        if cursor:
-            variables["cursor"] = cursor
+    for qid in _RETWEETERS_QUERY_IDS:
+        _URL = f"https://x.com/i/api/graphql/{qid}/Retweeters"
+        seen: set = set()
+        users: list = []
+        cursor = None
+        qid_ok = False
+        empty_pages = 0
 
-        import urllib.request as _ur, urllib.parse as _up
-        params = _up.urlencode({"variables": json.dumps(variables), "features": _FEATURES})
-        req_url = f"{_URL}?{params}"
+        for _page in range(50):
+            variables = {"tweetId": str(tweet_id), "count": 20, "includePromotedContent": True}
+            if cursor:
+                variables["cursor"] = cursor
 
-        try:
-            if _HAS_CURL:
-                resp = _curl.get(req_url, headers=hdrs, impersonate="chrome124", timeout=30)
-                status, body = resp.status_code, resp.text
+            params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
+            req_url = f"{_URL}?{params}"
+
+            status, body = _http_get(req_url, hdrs, retries=3)
+
+            if status == 0:
+                last_error = body
+                break
+            if status == 429:
+                last_error = "Rate limited (429) — try again in a few minutes"
+                break
+            if status == 403:
+                last_error = f"Query ID {qid} rejected (403) — trying next"
+                break
+            if status != 200:
+                last_error = f"HTTP {status}: {body[:300]}"
+                break
+
+            qid_ok = True
+            try:
+                data = json.loads(body)
+            except Exception:
+                last_error = f"Invalid JSON from query ID {qid}"
+                break
+
+            # Surface any Twitter-side errors
+            if data.get("errors"):
+                errs = "; ".join(e.get("message","?") for e in data["errors"][:3])
+                last_error = f"Twitter error: {errs}"
+                break
+
+            instructions = (
+                data.get("data", {})
+                    .get("retweeters_timeline", {})
+                    .get("timeline", {})
+                    .get("instructions", [])
+            )
+
+            next_cursor = None
+            found_users = 0
+            for instr in instructions:
+                for entry in instr.get("entries", []):
+                    eid = entry.get("entryId", "")
+                    content = entry.get("content", {})
+
+                    if eid.startswith("user-"):
+                        legacy = (
+                            content.get("itemContent", {})
+                                   .get("user_results", {})
+                                   .get("result", {})
+                                   .get("legacy", {})
+                        )
+                        screen_name = legacy.get("screen_name", "").strip()
+                        if not screen_name or screen_name.lower() in seen:
+                            continue
+                        if no_admins and (legacy.get("verified") or legacy.get("is_blue_verified")):
+                            continue
+                        seen.add(screen_name.lower())
+                        users.append(screen_name)
+                        found_users += 1
+
+                    elif "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
+                        next_cursor = (content.get("value")
+                                       or content.get("itemContent", {}).get("value"))
+
+            if found_users == 0:
+                empty_pages += 1
             else:
-                req = _ur.Request(req_url, headers=hdrs)
-                with _ur.urlopen(req, timeout=30) as r:
-                    status, body = r.status, r.read().decode()
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+                empty_pages = 0
 
-        if status != 200:
-            return {"ok": False, "error": f"HTTP {status}: {body[:200]}"}
+            if len(users) >= limit or not next_cursor or empty_pages >= 3:
+                break
+            cursor = next_cursor
 
-        try:
-            data = json.loads(body)
-        except Exception:
-            return {"ok": False, "error": "Invalid JSON response"}
-
-        instructions = (
-            data.get("data", {})
-                .get("retweeters_timeline", {})
-                .get("timeline", {})
-                .get("instructions", [])
-        )
-
-        next_cursor = None
-        found_users = 0
-        for instr in instructions:
-            for entry in instr.get("entries", []):
-                eid = entry.get("entryId", "")
-                content = entry.get("content", {})
-
-                # User entry
-                if eid.startswith("user-"):
-                    legacy = (
-                        content.get("itemContent", {})
-                               .get("user_results", {})
-                               .get("result", {})
-                               .get("legacy", {})
-                    )
-                    screen_name = legacy.get("screen_name", "").strip()
-                    if not screen_name or screen_name.lower() in seen:
-                        continue
-                    # Skip verified if --no-admins
-                    if no_admins and (legacy.get("verified") or legacy.get("is_blue_verified")):
-                        continue
-                    seen.add(screen_name.lower())
-                    users.append(screen_name)
-                    found_users += 1
-
-                # Cursor entry
-                elif "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
-                    next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
-
-        if len(users) >= limit or not next_cursor or found_users == 0:
+        if qid_ok and users:
             break
-        cursor = next_cursor
 
     if not users:
-        return {"ok": True, "users": [], "count": 0, "message": "No retweeters found"}
+        msg = last_error if last_error else "No retweeters found (tweet may have 0 retweets or auth is expired)"
+        return {"ok": True, "users": [], "count": 0, "message": msg}
+
+    users = users[:limit]
+    return {"ok": True, "users": users, "count": len(users)}
+
+
+def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
+                           limit: int = 200, no_admins: bool = False) -> dict:
+    """
+    Fetch users who replied to a tweet using Twitter's TweetDetail GraphQL API.
+    Used as a fallback when Scweet is not installed (e.g. on Render).
+    Returns {"ok": True, "users": [...usernames], "count": N}
+          | {"ok": False, "error": "..."}
+    """
+    import urllib.parse as _up
+
+    hdrs = _headers(auth_token, ct0)
+    last_error = "All TweetDetail query IDs failed"
+
+    for qid in _TWEETDETAIL_QUERY_IDS:
+        _URL = f"https://x.com/i/api/graphql/{qid}/TweetDetail"
+        seen: set = set()
+        users: list = []
+        cursor = None
+        qid_ok = False
+        empty_pages = 0
+
+        for _page in range(50):
+            variables = {
+                "focalTweetId": str(tweet_id),
+                "count": 20,
+                "includePromotedContent": True,
+                "withCommunity": True,
+                "withQuickPromoteEligibilityTweetFields": True,
+                "withBirdwatchNotes": True,
+                "withVoice": True,
+            }
+            if cursor:
+                variables["cursor"] = cursor
+
+            params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
+            req_url = f"{_URL}?{params}"
+
+            status, body = _http_get(req_url, hdrs, retries=3)
+
+            if status == 0:
+                last_error = body
+                break
+            if status == 429:
+                last_error = "Rate limited (429) — try again in a few minutes"
+                break
+            if status in (403, 400):
+                last_error = f"Query ID {qid} rejected ({status}) — trying next"
+                break
+            if status != 200:
+                last_error = f"HTTP {status}: {body[:300]}"
+                break
+
+            qid_ok = True
+            try:
+                data = json.loads(body)
+            except Exception:
+                last_error = f"Invalid JSON from query ID {qid}"
+                break
+
+            if data.get("errors"):
+                errs = "; ".join(e.get("message","?") for e in data["errors"][:3])
+                last_error = f"Twitter error: {errs}"
+                break
+
+            instructions = (
+                data.get("data", {})
+                    .get("threaded_conversation_with_injections_v2", {})
+                    .get("instructions", [])
+            )
+
+            next_cursor = None
+            found_users = 0
+
+            def _extract_user(tweet_result):
+                return (
+                    tweet_result.get("core", {})
+                                .get("user_results", {})
+                                .get("result", {})
+                                .get("legacy", {})
+                )
+
+            for instr in instructions:
+                for entry in instr.get("entries", []):
+                    eid = entry.get("entryId", "")
+                    content = entry.get("content", {})
+
+                    # Skip the focal tweet itself
+                    if eid == f"tweet-{tweet_id}":
+                        continue
+
+                    # Single reply tweet
+                    if eid.startswith("tweet-"):
+                        tr = content.get("itemContent", {}).get("tweet_results", {}).get("result", {})
+                        legacy = _extract_user(tr)
+                        sn = legacy.get("screen_name", "").strip()
+                        if sn and sn.lower() not in seen:
+                            if no_admins and (legacy.get("verified") or legacy.get("is_blue_verified")):
+                                pass
+                            else:
+                                seen.add(sn.lower()); users.append(sn); found_users += 1
+
+                    # Threaded reply module (multiple replies in one entry)
+                    elif content.get("entryType") == "TimelineTimelineModule":
+                        for item in content.get("items", []):
+                            tr = (item.get("item", {})
+                                      .get("itemContent", {})
+                                      .get("tweet_results", {})
+                                      .get("result", {}))
+                            legacy = _extract_user(tr)
+                            sn = legacy.get("screen_name", "").strip()
+                            if sn and sn.lower() not in seen:
+                                if no_admins and (legacy.get("verified") or legacy.get("is_blue_verified")):
+                                    pass
+                                else:
+                                    seen.add(sn.lower()); users.append(sn); found_users += 1
+
+                    # Bottom cursor for pagination
+                    if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
+                        next_cursor = (content.get("value")
+                                       or content.get("itemContent", {}).get("value"))
+
+            if found_users == 0:
+                empty_pages += 1
+            else:
+                empty_pages = 0
+
+            if len(users) >= limit or not next_cursor or empty_pages >= 3:
+                break
+            cursor = next_cursor
+
+        if qid_ok and users:
+            break
+
+    if not users:
+        msg = last_error if last_error else "No replies found"
+        return {"ok": True, "users": [], "count": 0, "message": msg}
 
     users = users[:limit]
     return {"ok": True, "users": users, "count": len(users)}
