@@ -1301,11 +1301,6 @@ async def handle_telegram_commands():
                             import re as _re, json as _json, sys as _sys
                             _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
 
-                            sc = get_scraper()
-                            if not sc:
-                                asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in Settings tab."))
-                                return
-
                             m = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", url)
                             src_id = m.group(2) if m else ""
                             if not src_id:
@@ -1313,21 +1308,38 @@ async def handle_telegram_commands():
                                 return
 
                             add_log(f"Scrape: fetching replies from tweet {src_id}…")
-                            try:
-                                query   = f"conversation_id:{src_id}"
-                                replies = sc.search(query=query, limit=500, save=True, filter_replies=False)
-                                replies, _, admins_removed = _filter_replies(replies, skip, src_id)
-                            except Exception as exc:
-                                asyncio.run(tb.send_message(f"❌ Error scraping tweet: {exc}"))
-                                return
-
-                            seen = set()
+                            sc = get_scraper()
                             usernames = []
-                            for r in replies:
-                                u = (r.get("user", {}).get("screen_name") or r.get("username", "")).strip()
-                                if u and u.lower() not in seen:
-                                    seen.add(u.lower())
-                                    usernames.append(u)
+                            admins_removed = 0
+
+                            if sc:
+                                try:
+                                    replies = sc.search(query=f"conversation_id:{src_id}", limit=500, save=True, filter_replies=False)
+                                    replies, _, admins_removed = _filter_replies(replies, skip, src_id)
+                                except Exception as exc:
+                                    asyncio.run(tb.send_message(f"❌ Scweet error: {exc}"))
+                                    return
+                                seen = set()
+                                for r in replies:
+                                    u = (r.get("user", {}).get("screen_name") or r.get("username", "")).strip()
+                                    if u and u.lower() not in seen:
+                                        seen.add(u.lower()); usernames.append(u)
+                            else:
+                                # GraphQL fallback — works on Render where Scweet is not installed
+                                from twitter_post import scrape_replies_graphql as _srg, get_auth_from_config as _gac
+                                auth_token, ct0 = _gac()
+                                if not auth_token or not ct0:
+                                    asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
+                                    return
+                                result = _srg(src_id, auth_token, ct0, limit=500, no_admins=skip)
+                                if not result.get("ok"):
+                                    asyncio.run(tb.send_message(f"❌ GraphQL error: {result.get('error','Unknown')}"))
+                                    return
+                                usernames = result.get("users", [])
+                                if not usernames:
+                                    notice = result.get("message", "No replies found")
+                                    asyncio.run(tb.send_message(f"⚠️ {notice}"))
+                                    return
 
                             if not usernames:
                                 asyncio.run(tb.send_message("⚠️ No users found in replies."))
@@ -2145,26 +2157,46 @@ def api_scrape():
         _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
         job = STATE["scrape_jobs"][jid]
 
-        sc = get_scraper()
-        if not sc:
-            job.update({"status": "error", "message": "❌ No Twitter auth_token set"}); return
-
         m = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", url)
         src_id = m.group(2) if m else ""
         if not src_id:
             job.update({"status": "error", "message": f"❌ Could not parse tweet ID from {url}"}); return
 
-        try:
-            replies = sc.search(query=f"conversation_id:{src_id}", limit=500, save=True, filter_replies=False)
-            replies, _, admins_removed = _filter_replies(replies, skip, src_id)
-        except Exception as exc:
-            job.update({"status": "error", "message": f"❌ Scrape error: {exc}"}); return
+        sc = get_scraper()
+        usernames = []
+        admins_removed = 0
 
-        seen = set(); usernames = []
-        for r in replies:
-            u = (r.get("user", {}).get("screen_name") or r.get("username", "")).strip()
-            if u and u.lower() not in seen:
-                seen.add(u.lower()); usernames.append(u)
+        if sc:
+            # Path 1: Scweet (available locally, not on Render)
+            try:
+                job.update({"message": "🔍 Scraping replies via Scweet…"})
+                replies = sc.search(query=f"conversation_id:{src_id}", limit=500, save=True, filter_replies=False)
+                replies, _, admins_removed = _filter_replies(replies, skip, src_id)
+            except Exception as exc:
+                job.update({"status": "error", "message": f"❌ Scweet error: {exc}"}); return
+
+            seen = set()
+            for r in replies:
+                u = (r.get("user", {}).get("screen_name") or r.get("username", "")).strip()
+                if u and u.lower() not in seen:
+                    seen.add(u.lower()); usernames.append(u)
+        else:
+            # Path 2: GraphQL TweetDetail fallback (works on Render without Scweet)
+            from twitter_post import scrape_replies_graphql as _srg, get_auth_from_config as _gac
+            auth_token, ct0 = _gac()
+            if not auth_token or not ct0:
+                job.update({"status": "error", "message": "❌ No Twitter auth_token/ct0 set — add them in Settings"}); return
+
+            job.update({"message": "🔍 Scraping replies via GraphQL…"})
+            result = _srg(src_id, auth_token, ct0, limit=500, no_admins=skip)
+            if not result.get("ok"):
+                job.update({"status": "error", "message": f"❌ {result.get('error','Unknown error')}"}); return
+
+            usernames = result.get("users", [])
+            if not usernames:
+                notice = result.get("message", "No replies found")
+                job.update({"status": "done", "count": 0, "finished_at": datetime.now().isoformat(),
+                            "message": f"⚠️ {notice}"}); return
 
         save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
         with open(save_path, "w") as f:
