@@ -623,17 +623,38 @@ async def handle_telegram_commands():
                         def _run_followers(u=uname):
                             users = read_cache("followers", u)
                             if users is None:
+                                import sys as _sys
+                                _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
                                 s = get_scraper()
-                                if not s:
-                                    asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
-                                    return
-                                add_log(f"Scraping ALL followers of @{u}…")
-                                users = _scrape_with_progress(
-                                    lambda: s.get_followers([u], limit=None, save=True, resume=False),
-                                    "followers", u
-                                )
-                                if not users:
-                                    return
+                                if s:
+                                    add_log(f"Scraping ALL followers of @{u} via Scweet…")
+                                    users = _scrape_with_progress(
+                                        lambda: s.get_followers([u], limit=None, save=True, resume=False),
+                                        "followers", u
+                                    )
+                                    if not users:
+                                        return
+                                else:
+                                    # GraphQL fallback — works on Render without Scweet
+                                    from twitter_post import scrape_followers_graphql as _sfg, get_auth_from_config as _gac
+                                    auth_token, ct0 = _gac()
+                                    if not auth_token or not ct0:
+                                        asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
+                                        return
+                                    add_log(f"Scraping followers of @{u} via GraphQL…")
+                                    asyncio.run(tb.send_message(f"🔍 Scraping followers of @{u} via GraphQL… (fetching up to 5,000)"))
+                                    result = _sfg(u, auth_token, ct0, limit=5000)
+                                    if not result.get("ok"):
+                                        asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
+                                        return
+                                    raw = result.get("users", [])
+                                    if not raw:
+                                        asyncio.run(tb.send_message(f"⚠️ {result.get('message', f'No followers found for @{u}')}"))
+                                        return
+                                    # Normalise to the same shape the rest of the code expects
+                                    users = [{"username": r["screen_name"], "displayname": r.get("name", r["screen_name"]),
+                                              "followersCount": r.get("followers_count", 0),
+                                              "verified": r.get("verified", False)} for r in raw]
                                 add_log(f"Scraped {len(users):,} followers of @{u} — saved to cache")
                                 write_cache("followers", u, users)
                                 write_offset("followers", u, 0)
@@ -712,17 +733,37 @@ async def handle_telegram_commands():
                         def _run_following(u=uname):
                             users = read_cache("following", u)
                             if users is None:
+                                import sys as _sys
+                                _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
                                 s = get_scraper()
-                                if not s:
-                                    asyncio.run(tb.send_message("❌ No Twitter auth_token set. Add it in the dashboard Settings tab."))
-                                    return
-                                add_log(f"Scraping ALL following of @{u}…")
-                                users = _scrape_with_progress(
-                                    lambda: s.get_following([u], limit=None, save=True, resume=False),
-                                    "following", u
-                                )
-                                if not users:
-                                    return
+                                if s:
+                                    add_log(f"Scraping ALL following of @{u} via Scweet…")
+                                    users = _scrape_with_progress(
+                                        lambda: s.get_following([u], limit=None, save=True, resume=False),
+                                        "following", u
+                                    )
+                                    if not users:
+                                        return
+                                else:
+                                    # GraphQL fallback — works on Render without Scweet
+                                    from twitter_post import scrape_following_graphql as _sfoG, get_auth_from_config as _gac
+                                    auth_token, ct0 = _gac()
+                                    if not auth_token or not ct0:
+                                        asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
+                                        return
+                                    add_log(f"Scraping following of @{u} via GraphQL…")
+                                    asyncio.run(tb.send_message(f"🔍 Scraping following of @{u} via GraphQL… (fetching up to 5,000)"))
+                                    result = _sfoG(u, auth_token, ct0, limit=5000)
+                                    if not result.get("ok"):
+                                        asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
+                                        return
+                                    raw = result.get("users", [])
+                                    if not raw:
+                                        asyncio.run(tb.send_message(f"⚠️ {result.get('message', f'No following found for @{u}')}"))
+                                        return
+                                    users = [{"username": r["screen_name"], "displayname": r.get("name", r["screen_name"]),
+                                              "followersCount": r.get("followers_count", 0),
+                                              "verified": r.get("verified", False)} for r in raw]
                                 add_log(f"Scraped {len(users):,} following of @{u} — saved to cache")
                                 write_cache("following", u, users)
                                 write_offset("following", u, 0)
