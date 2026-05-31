@@ -685,6 +685,239 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
     return {"ok": True, "users": users, "count": len(users)}
 
 
+def _resolve_user_id(username: str, auth_token: str, ct0: str) -> str:
+    """Resolve a Twitter screen_name to a numeric user ID via GraphQL."""
+    import urllib.parse as _up
+    _QUERY_IDS = ["xmU6X_CKVnQ5BltcLoxFGA", "G3KGOASz96M-Ou3vSqKxfA", "oUZZZ2lk73dr5urpqiVyWA"]
+    hdrs = _headers(auth_token, ct0)
+    features = json.dumps({
+        "hidden_profile_likes_enabled": True,
+        "hidden_profile_subscriptions_enabled": True,
+        "responsive_web_graphql_exclude_directive_enabled": True,
+        "verified_phone_label_enabled": False,
+        "subscriptions_verification_info_is_identity_verified_enabled": True,
+        "subscriptions_verification_info_verified_since_enabled": True,
+        "highlights_tweets_tab_ui_enabled": True,
+        "responsive_web_twitter_article_notes_tab_enabled": True,
+        "creator_subscriptions_tweet_preview_api_enabled": True,
+        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+    })
+    for qid in _QUERY_IDS:
+        url = f"https://x.com/i/api/graphql/{qid}/UserByScreenName"
+        params = _up.urlencode({
+            "variables": json.dumps({"screen_name": username, "withSafetyModeUserFields": True}),
+            "features": features,
+        })
+        status, body = _http_get(f"{url}?{params}", hdrs, retries=2)
+        if status == 200:
+            try:
+                data = json.loads(body)
+                uid = (data.get("data", {})
+                           .get("user", {})
+                           .get("result", {})
+                           .get("rest_id", ""))
+                if uid:
+                    return uid
+            except Exception:
+                continue
+    return ""
+
+
+def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
+                             limit: int = 500) -> dict:
+    """
+    Fetch followers of a Twitter account via GraphQL (no Scweet needed).
+    Returns {"ok": True, "users": [...dicts with screen_name/name/followers_count], "count": N}
+           | {"ok": False, "error": "..."}
+    """
+    import urllib.parse as _up
+
+    uid = _resolve_user_id(username, auth_token, ct0)
+    if not uid:
+        return {"ok": False, "error": f"Could not resolve @{username} to a user ID"}
+
+    _QUERY_IDS = ["9-uRROAZQPxhkXIbT5hFZA", "djdTXizios1zWqhGkmHB8A", "rRXFSG5vR6drKr5M25gKVg"]
+    hdrs = _headers(auth_token, ct0)
+    last_error = "All query IDs failed"
+
+    for qid in _QUERY_IDS:
+        _URL = f"https://x.com/i/api/graphql/{qid}/Followers"
+        seen: set = set()
+        users: list = []
+        cursor = None
+        qid_ok = False
+        empty_pages = 0
+
+        for _page in range(100):
+            variables = {"userId": uid, "count": 20, "includePromotedContent": False}
+            if cursor:
+                variables["cursor"] = cursor
+            params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
+            status, body = _http_get(f"{_URL}?{params}", hdrs, retries=3)
+
+            if status in (403, 400):
+                last_error = f"Query ID {qid} rejected ({status})"
+                break
+            if status == 429:
+                last_error = "Rate limited (429) — try again in a few minutes"
+                break
+            if status == 0:
+                last_error = body; break
+            if status != 200:
+                last_error = f"HTTP {status}: {body[:200]}"; break
+
+            qid_ok = True
+            try:
+                data = json.loads(body)
+            except Exception:
+                last_error = "Invalid JSON"; break
+
+            if data.get("errors"):
+                last_error = "; ".join(e.get("message","?") for e in data["errors"][:2])
+                break
+
+            instructions = (
+                data.get("data", {})
+                    .get("followers_timeline", {})
+                    .get("timeline", {})
+                    .get("instructions", [])
+            )
+
+            next_cursor = None
+            found = 0
+            for instr in instructions:
+                for entry in instr.get("entries", []):
+                    eid = entry.get("entryId", "")
+                    content = entry.get("content", {})
+                    if eid.startswith("user-"):
+                        legacy = (content.get("itemContent", {})
+                                         .get("user_results", {})
+                                         .get("result", {})
+                                         .get("legacy", {}))
+                        sn = legacy.get("screen_name", "").strip()
+                        if sn and sn.lower() not in seen:
+                            seen.add(sn.lower())
+                            users.append({
+                                "screen_name": sn,
+                                "name": legacy.get("name", sn),
+                                "followers_count": legacy.get("followers_count", 0),
+                                "verified": legacy.get("verified", False) or legacy.get("is_blue_verified", False),
+                            })
+                            found += 1
+                    if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
+                        next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
+
+            empty_pages = 0 if found else empty_pages + 1
+            if len(users) >= limit or not next_cursor or empty_pages >= 3:
+                break
+            cursor = next_cursor
+
+        if qid_ok and users:
+            break
+
+    if not users:
+        return {"ok": True, "users": [], "count": 0,
+                "message": last_error or f"No followers found for @{username}"}
+    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
+
+
+def scrape_following_graphql(username: str, auth_token: str, ct0: str,
+                              limit: int = 500) -> dict:
+    """
+    Fetch accounts a Twitter user follows via GraphQL (no Scweet needed).
+    Returns same shape as scrape_followers_graphql.
+    """
+    import urllib.parse as _up
+
+    uid = _resolve_user_id(username, auth_token, ct0)
+    if not uid:
+        return {"ok": False, "error": f"Could not resolve @{username} to a user ID"}
+
+    _QUERY_IDS = ["iSicc7LrzWGBgDPL0tM_TQ", "f0q-KKOTxb1yFpQEEfFmFQ", "eWTmcJY3EMCqQgBLuSZiGQ"]
+    hdrs = _headers(auth_token, ct0)
+    last_error = "All query IDs failed"
+
+    for qid in _QUERY_IDS:
+        _URL = f"https://x.com/i/api/graphql/{qid}/Following"
+        seen: set = set()
+        users: list = []
+        cursor = None
+        qid_ok = False
+        empty_pages = 0
+
+        for _page in range(100):
+            variables = {"userId": uid, "count": 20, "includePromotedContent": False}
+            if cursor:
+                variables["cursor"] = cursor
+            params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
+            status, body = _http_get(f"{_URL}?{params}", hdrs, retries=3)
+
+            if status in (403, 400):
+                last_error = f"Query ID {qid} rejected ({status})"
+                break
+            if status == 429:
+                last_error = "Rate limited (429)"; break
+            if status == 0:
+                last_error = body; break
+            if status != 200:
+                last_error = f"HTTP {status}: {body[:200]}"; break
+
+            qid_ok = True
+            try:
+                data = json.loads(body)
+            except Exception:
+                last_error = "Invalid JSON"; break
+
+            if data.get("errors"):
+                last_error = "; ".join(e.get("message","?") for e in data["errors"][:2])
+                break
+
+            instructions = (
+                data.get("data", {})
+                    .get("following_timeline", {})
+                    .get("timeline", {})
+                    .get("instructions", [])
+            )
+
+            next_cursor = None
+            found = 0
+            for instr in instructions:
+                for entry in instr.get("entries", []):
+                    eid = entry.get("entryId", "")
+                    content = entry.get("content", {})
+                    if eid.startswith("user-"):
+                        legacy = (content.get("itemContent", {})
+                                         .get("user_results", {})
+                                         .get("result", {})
+                                         .get("legacy", {}))
+                        sn = legacy.get("screen_name", "").strip()
+                        if sn and sn.lower() not in seen:
+                            seen.add(sn.lower())
+                            users.append({
+                                "screen_name": sn,
+                                "name": legacy.get("name", sn),
+                                "followers_count": legacy.get("followers_count", 0),
+                                "verified": legacy.get("verified", False) or legacy.get("is_blue_verified", False),
+                            })
+                            found += 1
+                    if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
+                        next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
+
+            empty_pages = 0 if found else empty_pages + 1
+            if len(users) >= limit or not next_cursor or empty_pages >= 3:
+                break
+            cursor = next_cursor
+
+        if qid_ok and users:
+            break
+
+    if not users:
+        return {"ok": True, "users": [], "count": 0,
+                "message": last_error or f"No following found for @{username}"}
+    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
+
+
 def get_auth_from_config() -> tuple:
     """
     Return (auth_token, ct0) from tools/targets.json or env vars.
