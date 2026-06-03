@@ -681,14 +681,17 @@ async def handle_telegram_commands():
                             if new_offset >= total:
                                 clear_cache("followers", u)
                                 asyncio.run(tb.send_message(
-                                    f"✅ That was the last batch — all {total:,} followers of @{u} sent.\n"
-                                    f"The next /followers {u} will re-scrape fresh data."
+                                    f"✅ All {total:,} followers of @{u} sent.\n\n"
+                                    f"▶️ Same account again: /followers {u}\n"
+                                    f"▶️ Different account: /followers otherusername\n"
+                                    f"▶️ Force fresh re-scrape: /rescrape_followers {u}"
                                 ))
                             else:
                                 write_offset("followers", u, new_offset)
                                 asyncio.run(tb.send_message(
-                                    f"📄 Sent {new_offset:,} of {total:,} total.\n"
-                                    f"Run /followers {u} again for the next 500."
+                                    f"📄 Sent {new_offset:,} of {total:,} — {total - new_offset:,} remaining.\n\n"
+                                    f"▶️ Next 500 from @{u}: /followers {u}\n"
+                                    f"▶️ Different account: /followers otherusername"
                                 ))
 
                         threading.Thread(target=_run_followers, daemon=True).start()
@@ -790,14 +793,17 @@ async def handle_telegram_commands():
                             if new_offset >= total:
                                 clear_cache("following", u)
                                 asyncio.run(tb.send_message(
-                                    f"✅ That was the last batch — all {total:,} following of @{u} sent.\n"
-                                    f"The next /following {u} will re-scrape fresh data."
+                                    f"✅ All {total:,} following of @{u} sent.\n\n"
+                                    f"▶️ Same account again: /following {u}\n"
+                                    f"▶️ Different account: /following otherusername\n"
+                                    f"▶️ Force fresh re-scrape: /rescrape_following {u}"
                                 ))
                             else:
                                 write_offset("following", u, new_offset)
                                 asyncio.run(tb.send_message(
-                                    f"📄 Sent {new_offset:,} of {total:,} total.\n"
-                                    f"Run /following {u} again for the next 500."
+                                    f"📄 Sent {new_offset:,} of {total:,} — {total - new_offset:,} remaining.\n\n"
+                                    f"▶️ Next 500 from @{u}: /following {u}\n"
+                                    f"▶️ Different account: /following otherusername"
                                 ))
 
                         threading.Thread(target=_run_following, daemon=True).start()
@@ -1945,7 +1951,53 @@ def api_save_secrets():
         save_env_secret("TELEGRAM_CHAT_ID", chat_id)
         saved.append("Telegram chat ID")
 
-    return jsonify({"ok": True, "saved": saved})
+    # ── Auto-sync changed secrets to Render ────────────────────────────────────
+    render_synced = False
+    render_key = os.environ.get("RENDER_API_KEY", "")
+    render_svc  = os.environ.get("RENDER_SERVICE_ID", "srv-d7s2rud7vvec738tlff0")
+    if render_key and saved:
+        try:
+            import urllib.request as _ur, urllib.error as _ue
+            def _rreq(method, path, payload=None):
+                url = f"https://api.render.com/v1{path}"
+                _d  = json.dumps(payload).encode() if payload else None
+                req = _ur.Request(url, data=_d, method=method, headers={
+                    "Authorization": f"Bearer {render_key}",
+                    "Accept": "application/json", "Content-Type": "application/json"
+                })
+                with _ur.urlopen(req, timeout=15) as r:
+                    return r.status, r.read()
+
+            # Get current Render env vars
+            _, body = _rreq("GET", f"/services/{render_svc}/env-vars")
+            current_evs = json.loads(body) if body.strip() else []
+            ev_map = {}
+            for item in current_evs:
+                ev = item.get("envVar", item)
+                ev_map[ev.get("key", "")] = ev.get("value", "")
+
+            # Apply changes
+            cfg_now = load_config()
+            overrides = {
+                "TWITTER_AUTH_TOKEN": cfg_now.get("twitter_auth_token", ev_map.get("TWITTER_AUTH_TOKEN", "")),
+                "TWITTER_CT0":        cfg_now.get("twitter_ct0",        ev_map.get("TWITTER_CT0", "")),
+            }
+            if tg_token:  overrides["TELEGRAM_BOT_TOKEN"] = tg_token
+            if chat_id:   overrides["TELEGRAM_CHAT_ID"]   = chat_id
+
+            ev_map.update({k: v for k, v in overrides.items() if v})
+            env_vars = [{"key": k, "value": v} for k, v in ev_map.items()]
+
+            st, _ = _rreq("PUT", f"/services/{render_svc}/env-vars", env_vars)
+            if st == 200:
+                # Trigger redeploy so new vars take effect
+                _rreq("POST", f"/services/{render_svc}/deploys", {})
+                render_synced = True
+                saved.append("✅ Render env vars updated + redeploy triggered")
+        except Exception as _e:
+            saved.append(f"⚠️ Render sync failed: {_e}")
+
+    return jsonify({"ok": True, "saved": saved, "render_synced": render_synced})
 
 
 @app.route("/api/token", methods=["POST"])
