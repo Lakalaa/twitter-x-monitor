@@ -443,7 +443,7 @@ def bulk_engage(
 
 
 def scrape_retweeters(tweet_id: str, auth_token: str, ct0: str,
-                      limit: int = 200, no_admins: bool = False) -> dict:
+                      limit: int = 999999, no_admins: bool = False) -> dict:
     """
     Fetch users who retweeted a tweet using Twitter's GraphQL API.
     Tries multiple query IDs with retry on 429.
@@ -549,12 +549,11 @@ def scrape_retweeters(tweet_id: str, auth_token: str, ct0: str,
         msg = last_error if last_error else "No retweeters found (tweet may have 0 retweets or auth is expired)"
         return {"ok": True, "users": [], "count": 0, "message": msg}
 
-    users = users[:limit]
     return {"ok": True, "users": users, "count": len(users)}
 
 
 def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
-                           limit: int = 200, no_admins: bool = False) -> dict:
+                           limit: int = 999999, no_admins: bool = False) -> dict:
     """
     Fetch users who replied to a tweet using Twitter's TweetDetail GraphQL API.
     Used as a fallback when Scweet is not installed (e.g. on Render).
@@ -703,7 +702,6 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
         msg = "No replies found for this tweet" if any_qid_ok else last_error
         return {"ok": True, "users": [], "count": 0, "message": msg}
 
-    users = users[:limit]
     return {"ok": True, "users": users, "count": len(users)}
 
 
@@ -747,7 +745,7 @@ def _resolve_user_id(username: str, auth_token: str, ct0: str) -> str:
 
 
 def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
-                             limit: int = 500) -> dict:
+                             limit: int = 999999) -> dict:
     """
     Fetch followers of a Twitter account via GraphQL (no Scweet needed).
     Returns {"ok": True, "users": [...dicts with screen_name/name/followers_count], "count": N}
@@ -843,11 +841,11 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
     if not users:
         return {"ok": True, "users": [], "count": 0,
                 "message": last_error or f"No followers found for @{username}"}
-    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
+    return {"ok": True, "users": users, "count": len(users)}
 
 
 def scrape_following_graphql(username: str, auth_token: str, ct0: str,
-                              limit: int = 500) -> dict:
+                              limit: int = 999999) -> dict:
     """
     Fetch accounts a Twitter user follows via GraphQL (no Scweet needed).
     Returns same shape as scrape_followers_graphql.
@@ -941,7 +939,7 @@ def scrape_following_graphql(username: str, auth_token: str, ct0: str,
     if not users:
         return {"ok": True, "users": [], "count": 0,
                 "message": last_error or f"No following found for @{username}"}
-    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
+    return {"ok": True, "users": users, "count": len(users)}
 
 
 def auto_refresh_ct0(auth_token: str) -> str:
