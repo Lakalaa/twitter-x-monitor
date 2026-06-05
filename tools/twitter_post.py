@@ -457,7 +457,7 @@ def scrape_retweeters(tweet_id: str, auth_token: str, ct0: str,
     last_error = "All query IDs failed"
 
     for qid in _RETWEETERS_QUERY_IDS:
-        _URL = f"https://x.com/i/api/graphql/{qid}/Retweeters"
+        _URL = f"https://api.twitter.com/graphql/{qid}/Retweeters"
         seen: set = set()
         users: list = []
         cursor = None
@@ -568,7 +568,7 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
     last_error = "All TweetDetail query IDs failed"
 
     for qid in _TWEETDETAIL_QUERY_IDS:
-        _URL = f"https://x.com/i/api/graphql/{qid}/TweetDetail"
+        _URL = f"https://api.twitter.com/graphql/{qid}/TweetDetail"
         seen: set = set()
         users: list = []
         cursor = None
@@ -714,7 +714,7 @@ def _resolve_user_id(username: str, auth_token: str, ct0: str) -> str:
         "responsive_web_graphql_timeline_navigation_enabled": True,
     })
     for qid in _QUERY_IDS:
-        url = f"https://x.com/i/api/graphql/{qid}/UserByScreenName"
+        url = f"https://api.twitter.com/graphql/{qid}/UserByScreenName"
         params = _up.urlencode({
             "variables": json.dumps({"screen_name": username, "withSafetyModeUserFields": True}),
             "features": features,
@@ -752,7 +752,7 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
     last_error = "All query IDs failed"
 
     for qid in _QUERY_IDS:
-        _URL = f"https://x.com/i/api/graphql/{qid}/Followers"
+        _URL = f"https://api.twitter.com/graphql/{qid}/Followers"
         seen: set = set()
         users: list = []
         cursor = None
