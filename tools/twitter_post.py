@@ -45,9 +45,8 @@ _RETWEETERS_QUERY_IDS = [
 
 _TWEETDETAIL_QUERY_IDS = [
     "6uCvnic3m5reVuehkvHa3w",  # current (June 2026)
-    "VWFGPVAGkZMGRKGe3GFFnA",
     "nBS-WpgA6ZG0CyNHD517JQ",
-    "BoHLKeBvibdYDiJON1oqTg",
+    "3XDB26fBve-MmjHaWTUZxA",
 ]
 
 _FOLLOWERS_QUERY_IDS = [
@@ -566,6 +565,7 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
 
     hdrs = _headers(auth_token, ct0)
     last_error = "All TweetDetail query IDs failed"
+    any_qid_ok = False
 
     for qid in _TWEETDETAIL_QUERY_IDS:
         _URL = f"https://api.twitter.com/graphql/{qid}/TweetDetail"
@@ -694,11 +694,13 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
                 break
             cursor = next_cursor
 
+        if qid_ok:
+            any_qid_ok = True
         if qid_ok and users:
             break
 
     if not users:
-        msg = last_error if last_error else "No replies found"
+        msg = "No replies found for this tweet" if any_qid_ok else last_error
         return {"ok": True, "users": [], "count": 0, "message": msg}
 
     users = users[:limit]
