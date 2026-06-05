@@ -44,9 +44,19 @@ _RETWEETERS_QUERY_IDS = [
 ]
 
 _TWEETDETAIL_QUERY_IDS = [
+    "6uCvnic3m5reVuehkvHa3w",  # current (June 2026)
     "VWFGPVAGkZMGRKGe3GFFnA",
     "nBS-WpgA6ZG0CyNHD517JQ",
     "BoHLKeBvibdYDiJON1oqTg",
+]
+
+_FOLLOWERS_QUERY_IDS = [
+    "Wp9x7NPOJ5klmf5H-350gw",        # current (June 2026)
+    "iYaPJI11EY8VtCL3hrKU9A",        # BlueVerifiedFollowers fallback
+]
+
+_FOLLOWING_QUERY_IDS = [
+    "XRzHZz4sLnhSgz55WGMCbg",        # current (June 2026)
 ]
 
 _SCRAPE_FEATURES = json.dumps({
@@ -688,7 +698,7 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
 def _resolve_user_id(username: str, auth_token: str, ct0: str) -> str:
     """Resolve a Twitter screen_name to a numeric user ID via GraphQL."""
     import urllib.parse as _up
-    _QUERY_IDS = ["xmU6X_CKVnQ5BltcLoxFGA", "G3KGOASz96M-Ou3vSqKxfA", "oUZZZ2lk73dr5urpqiVyWA"]
+    _QUERY_IDS = ["IGgvgiOx4QZndDHuD3x9TQ", "xmU6X_CKVnQ5BltcLoxFGA", "G3KGOASz96M-Ou3vSqKxfA"]
     hdrs = _headers(auth_token, ct0)
     features = json.dumps({
         "hidden_profile_likes_enabled": True,
@@ -737,7 +747,7 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
     if not uid:
         return {"ok": False, "error": f"Could not resolve @{username} to a user ID"}
 
-    _QUERY_IDS = ["9-uRROAZQPxhkXIbT5hFZA", "djdTXizios1zWqhGkmHB8A", "rRXFSG5vR6drKr5M25gKVg"]
+    _QUERY_IDS = _FOLLOWERS_QUERY_IDS + ["9-uRROAZQPxhkXIbT5hFZA", "djdTXizios1zWqhGkmHB8A"]
     hdrs = _headers(auth_token, ct0)
     last_error = "All query IDs failed"
 
@@ -834,7 +844,7 @@ def scrape_following_graphql(username: str, auth_token: str, ct0: str,
     if not uid:
         return {"ok": False, "error": f"Could not resolve @{username} to a user ID"}
 
-    _QUERY_IDS = ["iSicc7LrzWGBgDPL0tM_TQ", "f0q-KKOTxb1yFpQEEfFmFQ", "eWTmcJY3EMCqQgBLuSZiGQ"]
+    _QUERY_IDS = _FOLLOWING_QUERY_IDS + ["iSicc7LrzWGBgDPL0tM_TQ", "f0q-KKOTxb1yFpQEEfFmFQ"]
     hdrs = _headers(auth_token, ct0)
     last_error = "All query IDs failed"
 
@@ -918,10 +928,50 @@ def scrape_following_graphql(username: str, auth_token: str, ct0: str,
     return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
 
 
+def auto_refresh_ct0(auth_token: str) -> str:
+    """
+    Visit x.com with just auth_token — Twitter responds by setting a fresh ct0
+    CSRF cookie. Returns the ct0 value, or "" on failure.
+    """
+    import http.cookiejar
+    try:
+        cj  = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+        req = urllib.request.Request("https://x.com/", headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Cookie": f"auth_token={auth_token}",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        opener.open(req, timeout=15)
+        ct0 = next((c.value for c in cj if c.name == "ct0"), "")
+        if ct0:
+            # Persist back to targets.json and env so callers always get it
+            config_path = os.path.join(os.path.dirname(__file__), "targets.json")
+            try:
+                cfg = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        cfg = json.load(f)
+                cfg["twitter_ct0"] = ct0
+                with open(config_path, "w") as f:
+                    json.dump(cfg, f, indent=2)
+            except Exception:
+                pass
+            os.environ["TWITTER_CT0"] = ct0
+        return ct0
+    except Exception:
+        return ""
+
+
 def get_auth_from_config() -> tuple:
     """
     Return (auth_token, ct0) from tools/targets.json or env vars.
-    Falls back gracefully.
+    If ct0 is missing, auto-refreshes it by visiting x.com with auth_token.
     """
     config_path = os.path.join(os.path.dirname(__file__), "targets.json")
     auth_token, ct0 = "", ""
@@ -937,4 +987,9 @@ def get_auth_from_config() -> tuple:
 
     auth_token = auth_token or os.environ.get("TWITTER_AUTH_TOKEN", "")
     ct0        = ct0        or os.environ.get("TWITTER_CT0", "")
+
+    # If we have an auth_token but no ct0, get one automatically
+    if auth_token and not ct0:
+        ct0 = auto_refresh_ct0(auth_token)
+
     return auth_token, ct0
