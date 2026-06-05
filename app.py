@@ -2342,9 +2342,9 @@ def api_retweeters():
     data      = request.json or {}
     tweet_url = data.get("tweet_url", "").strip()
     no_admins = bool(data.get("no_admins", False))
-    limit     = data.get("limit", 200)
+    limit     = data.get("limit", 999999)
     try: limit = int(limit)
-    except (ValueError, TypeError): limit = 200
+    except (ValueError, TypeError): limit = 999999
     if not tweet_url:
         return jsonify({"ok": False, "error": "tweet_url is required"}), 400
 
