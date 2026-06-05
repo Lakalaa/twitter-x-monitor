@@ -17,5 +17,6 @@
       "since_days_ago": 3
     }
   ],
-  "check_interval_minutes": 60
+  "check_interval_minutes": 60,
+  "twitter_ct0": "824b76fcf5cea4ffc87c1d5b89ea18b09c4d5b9a313660b0a71c5dfb54acdfdbb9f68e91cf3cc0278906742285e7c6b201a422cb33ebcae2026dbebd2a5a4878b35f06d20b44b2d83efb50d1a1d3d02c"
 }
