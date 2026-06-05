@@ -578,7 +578,8 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
         for _page in range(50):
             variables = {
                 "focalTweetId": str(tweet_id),
-                "count": 20,
+                "with_rux_injections": False,
+                "rankingMode": "Relevance",
                 "includePromotedContent": True,
                 "withCommunity": True,
                 "withQuickPromoteEligibilityTweetFields": True,
@@ -588,7 +589,16 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
             if cursor:
                 variables["cursor"] = cursor
 
-            params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
+            params = _up.urlencode({
+                "variables": json.dumps(variables),
+                "features": _SCRAPE_FEATURES,
+                "fieldToggles": json.dumps({
+                    "withArticleRichContentState": True,
+                    "withArticlePlainText": False,
+                    "withGrokAnalyze": False,
+                    "withDisallowedReplyControls": False,
+                }),
+            })
             req_url = f"{_URL}?{params}"
 
             status, body = _http_get(req_url, hdrs, retries=3)
@@ -789,7 +799,9 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
 
             instructions = (
                 data.get("data", {})
-                    .get("followers_timeline", {})
+                    .get("user", {})
+                    .get("result", {})
+                    .get("timeline", {})
                     .get("timeline", {})
                     .get("instructions", [])
             )
@@ -849,7 +861,7 @@ def scrape_following_graphql(username: str, auth_token: str, ct0: str,
     last_error = "All query IDs failed"
 
     for qid in _QUERY_IDS:
-        _URL = f"https://x.com/i/api/graphql/{qid}/Following"
+        _URL = f"https://api.twitter.com/graphql/{qid}/Following"
         seen: set = set()
         users: list = []
         cursor = None
@@ -885,7 +897,9 @@ def scrape_following_graphql(username: str, auth_token: str, ct0: str,
 
             instructions = (
                 data.get("data", {})
-                    .get("following_timeline", {})
+                    .get("user", {})
+                    .get("result", {})
+                    .get("timeline", {})
                     .get("timeline", {})
                     .get("instructions", [])
             )
