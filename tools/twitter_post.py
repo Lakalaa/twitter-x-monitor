@@ -112,25 +112,41 @@ def _headers(auth_token: str, ct0: str) -> dict:
     }
 
 
-def _http_get(url: str, headers: dict, retries: int = 3) -> tuple:
+def _proxy_dict(proxy: str) -> dict:
+    """Convert a proxy URL string to a dict accepted by curl_cffi / urllib."""
+    if not proxy:
+        return {}
+    return {"http": proxy, "https": proxy}
+
+
+def _http_get(url: str, headers: dict, retries: int = 3, proxy: str = None) -> tuple:
     """
     GET request with retry on 429 / transient network errors.
     Returns (status_code, body_text).
+    proxy — optional proxy URL e.g. "http://user:pass@host:port" or "socks5://..."
     """
     import urllib.request as _ur
     last_err = "No attempts made"
+    proxies = _proxy_dict(proxy)
     for attempt in range(retries):
         try:
             if _HAS_CURL:
-                resp = _curl.get(url, headers=headers, impersonate="chrome124", timeout=30)
+                kwargs = dict(headers=headers, impersonate="chrome124", timeout=30)
+                if proxies:
+                    kwargs["proxies"] = proxies
+                resp = _curl.get(url, **kwargs)
                 if resp.status_code == 429:
                     wait = 15 * (attempt + 1)
                     time.sleep(wait)
                     continue
                 return resp.status_code, resp.text
             else:
+                handlers = []
+                if proxy:
+                    handlers.append(_ur.ProxyHandler(proxies))
+                opener = _ur.build_opener(*handlers)
                 req = _ur.Request(url, headers=headers)
-                with _ur.urlopen(req, timeout=30) as r:
+                with opener.open(req, timeout=30) as r:
                     return r.status, r.read().decode()
         except Exception as exc:
             last_err = str(exc)
@@ -139,18 +155,27 @@ def _http_get(url: str, headers: dict, retries: int = 3) -> tuple:
     return 0, last_err
 
 
-def _http_post(url: str, payload: dict, headers: dict) -> tuple:
-    """Returns (status_code, body_text). Works with or without curl_cffi."""
+def _http_post(url: str, payload: dict, headers: dict, proxy: str = None) -> tuple:
+    """Returns (status_code, body_text). Works with or without curl_cffi.
+    proxy — optional proxy URL e.g. "http://user:pass@host:port" or "socks5://..."
+    """
+    proxies = _proxy_dict(proxy)
     if _HAS_CURL:
-        resp = _curl.post(url, json=payload, headers=headers,
-                          impersonate="chrome124", timeout=30)
+        kwargs = dict(json=payload, headers=headers, impersonate="chrome124", timeout=30)
+        if proxies:
+            kwargs["proxies"] = proxies
+        resp = _curl.post(url, **kwargs)
         return resp.status_code, resp.text
     else:
         import urllib.request as _ur
+        handlers = []
+        if proxy:
+            handlers.append(_ur.ProxyHandler(proxies))
+        opener = _ur.build_opener(*handlers)
         req = _ur.Request(url, data=json.dumps(payload).encode(),
                           headers=headers, method="POST")
         try:
-            with _ur.urlopen(req, timeout=30) as r:
+            with opener.open(req, timeout=30) as r:
                 return r.status, r.read().decode()
         except Exception as exc:
             raise exc
@@ -193,11 +218,12 @@ def _create_tweet_payload(text: str, reply_to_id: str, query_id: str) -> dict:
 
 
 def post_reply(text: str, in_reply_to_tweet_id: str,
-               auth_token: str, ct0: str) -> dict:
+               auth_token: str, ct0: str, proxy: str = None) -> dict:
     """
     Post a reply to a tweet.
     Returns {"ok": True, "tweet_id": "..."} or {"ok": False, "error": "..."}.
     Tries multiple GraphQL query IDs in sequence.
+    proxy — optional proxy URL e.g. "http://user:pass@host:port"
     """
     if not auth_token or not ct0:
         return {"ok": False, "error": "Missing auth_token or ct0"}
@@ -210,7 +236,7 @@ def post_reply(text: str, in_reply_to_tweet_id: str,
         payload = _create_tweet_payload(text, in_reply_to_tweet_id, query_id)
 
         try:
-            status, body = _http_post(url, payload, headers)
+            status, body = _http_post(url, payload, headers, proxy=proxy)
 
             if status in (200, 201):
                 data = json.loads(body)
@@ -236,10 +262,11 @@ def post_reply(text: str, in_reply_to_tweet_id: str,
     return {"ok": False, "error": last_error}
 
 
-def like_tweet(tweet_id: str, auth_token: str, ct0: str) -> dict:
+def like_tweet(tweet_id: str, auth_token: str, ct0: str, proxy: str = None) -> dict:
     """
     Like a tweet.
     Returns {"ok": True} or {"ok": False, "error": "..."}.
+    proxy — optional proxy URL e.g. "http://user:pass@host:port"
     """
     if not auth_token or not ct0:
         return {"ok": False, "error": "Missing auth_token or ct0"}
@@ -254,7 +281,7 @@ def like_tweet(tweet_id: str, auth_token: str, ct0: str) -> dict:
             "queryId": query_id,
         }
         try:
-            status, body = _http_post(url, payload, headers)
+            status, body = _http_post(url, payload, headers, proxy=proxy)
             if status in (200, 201):
                 data = json.loads(body)
                 # Success: {"data": {"favorite_tweet": "Done"}}
@@ -274,10 +301,11 @@ def like_tweet(tweet_id: str, auth_token: str, ct0: str) -> dict:
     return {"ok": False, "error": last_error}
 
 
-def retweet_post(tweet_id: str, auth_token: str, ct0: str) -> dict:
+def retweet_post(tweet_id: str, auth_token: str, ct0: str, proxy: str = None) -> dict:
     """
     Retweet a tweet.
     Returns {"ok": True} or {"ok": False, "error": "..."}.
+    proxy — optional proxy URL e.g. "http://user:pass@host:port"
     """
     if not auth_token or not ct0:
         return {"ok": False, "error": "Missing auth_token or ct0"}
@@ -292,7 +320,7 @@ def retweet_post(tweet_id: str, auth_token: str, ct0: str) -> dict:
             "queryId": query_id,
         }
         try:
-            status, body = _http_post(url, payload, headers)
+            status, body = _http_post(url, payload, headers, proxy=proxy)
             if status in (200, 201):
                 data = json.loads(body)
                 if data.get("data", {}).get("create_retweet"):
@@ -386,6 +414,7 @@ def bulk_engage(
         cookies  = entry.get("cookies", {})
         auth_tok = cookies.get("auth_token", "")
         ct0_val  = cookies.get("ct0", "")
+        proxy    = entry.get("proxy") or None   # per-account proxy
 
         if not auth_tok or not ct0_val:
             results.append({"username": username, "action": action, "ok": False, "detail": "missing credentials"})
@@ -397,17 +426,17 @@ def bulk_engage(
         entry_results = []
 
         if action in ("like", "both"):
-            res = like_tweet(tweet_id, auth_tok, ct0_val)
+            res = like_tweet(tweet_id, auth_tok, ct0_val, proxy=proxy)
             entry_results.append(("like", res))
 
         if action == "retweet":
-            res = retweet_post(tweet_id, auth_tok, ct0_val)
+            res = retweet_post(tweet_id, auth_tok, ct0_val, proxy=proxy)
             entry_results.append(("retweet", res))
 
         if action in ("comment", "both"):
             text = build_comment(comment_text)
             if text:
-                res = post_reply(text, tweet_id, auth_tok, ct0_val)
+                res = post_reply(text, tweet_id, auth_tok, ct0_val, proxy=proxy)
             else:
                 res = {"ok": False, "error": "No comment text provided"}
             entry_results.append(("comment", res))
