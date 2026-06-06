@@ -841,12 +841,50 @@ def _resolve_user_id(username: str, auth_token: str, ct0: str) -> str:
     return ""
 
 
+def _is_likely_bot(legacy: dict) -> bool:
+    """
+    Heuristic bot / spam / group account detector.
+    Returns True if the account looks like a bot, group, or spam account.
+    Signals used:
+      • default_profile_image = True  (never set a profile pic)
+      • statuses_count < 5            (almost no tweets)
+      • followers_count < 3           (basically no audience)
+      • account age < 30 days         (brand-new burner)
+      • no description AND default profile
+    """
+    if legacy.get("default_profile_image"):
+        return True
+    if legacy.get("statuses_count", 999) < 5:
+        return True
+    if legacy.get("followers_count", 999) < 3:
+        return True
+    ca = legacy.get("created_at", "")
+    if ca:
+        try:
+            from datetime import datetime, timezone as _tz
+            dt = datetime.strptime(ca, "%a %b %d %H:%M:%S +0000 %Y").replace(tzinfo=_tz.utc)
+            if (datetime.now(_tz.utc) - dt).days < 30:
+                return True
+        except Exception:
+            pass
+    if not legacy.get("description", "").strip() and legacy.get("default_profile", True):
+        return True
+    return False
+
+
 def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
-                             limit: int = 999999) -> dict:
+                             limit: int = 999999,
+                             skip_verified: bool = False,
+                             skip_bots: bool = False) -> dict:
     """
     Fetch followers of a Twitter account via GraphQL (no Scweet needed).
     Returns {"ok": True, "users": [...dicts with screen_name/name/followers_count], "count": N}
            | {"ok": False, "error": "..."}
+    Filters:
+      skip_verified — drop blue-tick / verified accounts
+      skip_bots     — drop accounts that look like bots/spam/groups
+                      (uses _is_likely_bot() heuristics)
+    Stops as soon as `limit` *passing* accounts have been collected.
     """
     import urllib.parse as _up
 
@@ -910,20 +948,32 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
                     eid = entry.get("entryId", "")
                     content = entry.get("content", {})
                     if eid.startswith("user-"):
-                        legacy = (content.get("itemContent", {})
-                                         .get("user_results", {})
-                                         .get("result", {})
-                                         .get("legacy", {}))
+                        result_obj = (content.get("itemContent", {})
+                                             .get("user_results", {})
+                                             .get("result", {}))
+                        legacy = result_obj.get("legacy", {})
                         sn = legacy.get("screen_name", "").strip()
-                        if sn and sn.lower() not in seen:
-                            seen.add(sn.lower())
-                            users.append({
-                                "screen_name": sn,
-                                "name": legacy.get("name", sn),
-                                "followers_count": legacy.get("followers_count", 0),
-                                "verified": legacy.get("verified", False) or legacy.get("is_blue_verified", False),
-                            })
-                            found += 1
+                        if not sn or sn.lower() in seen:
+                            continue
+                        is_verified = (legacy.get("verified", False)
+                                       or legacy.get("is_blue_verified", False)
+                                       or bool(result_obj.get("is_blue_verified")))
+                        if skip_verified and is_verified:
+                            continue
+                        if skip_bots and _is_likely_bot(legacy):
+                            continue
+                        seen.add(sn.lower())
+                        users.append({
+                            "screen_name": sn,
+                            "name": legacy.get("name", sn),
+                            "followers_count": legacy.get("followers_count", 0),
+                            "following_count": legacy.get("friends_count", 0),
+                            "tweet_count": legacy.get("statuses_count", 0),
+                            "verified": is_verified,
+                            "created_at": legacy.get("created_at", ""),
+                            "description": legacy.get("description", ""),
+                        })
+                        found += 1
                     if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
                         next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
 
@@ -938,7 +988,7 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
     if not users:
         return {"ok": True, "users": [], "count": 0,
                 "message": last_error or f"No followers found for @{username}"}
-    return {"ok": True, "users": users, "count": len(users)}
+    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
 
 
 def scrape_following_graphql(username: str, auth_token: str, ct0: str,
