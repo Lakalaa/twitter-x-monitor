@@ -542,6 +542,16 @@ amazing
 crypto reward
 reward received</textarea>
         </div>
+        <!-- Recency option -->
+        <div style="background:#0d1a1f;border:1px solid #164e63;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#22d3ee;white-space:nowrap">
+            <input type="checkbox" id="kw-recent-only" onchange="toggleRecentMinutes()" style="accent-color:#0e7490;width:14px;height:14px">
+            🕐 Also grab comments posted within last
+          </label>
+          <input id="kw-recent-mins" type="number" min="1" max="1440" value="20" disabled
+            style="width:72px;background:#1a2e36;border:1px solid #164e63;border-radius:6px;padding:6px 10px;color:#67e8f9;font-size:14px;font-weight:600;text-align:center;opacity:0.4">
+          <span style="font-size:13px;color:#6b7280">minutes (regardless of keywords)</span>
+        </div>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#d1d5db">
             <input type="checkbox" id="kw-skip-verified" checked style="accent-color:#0e7490;width:14px;height:14px"> Skip verified / blue-tick
@@ -1617,6 +1627,13 @@ async function clearSavedUsers() {
   loadSavedUsers();
 }
 
+function toggleRecentMinutes() {
+  const cb  = document.getElementById('kw-recent-only');
+  const inp = document.getElementById('kw-recent-mins');
+  inp.disabled = !cb.checked;
+  inp.style.opacity = cb.checked ? '1' : '0.4';
+}
+
 async function scrapeByKeywords() {
   const url    = document.getElementById('kw-tweet-url').value.trim();
   const limit  = parseInt(document.getElementById('kw-limit').value) || 5643;
@@ -1624,6 +1641,8 @@ async function scrapeByKeywords() {
   const sv     = document.getElementById('kw-skip-verified').checked;
   const sb     = document.getElementById('kw-skip-bots').checked;
   const append = document.getElementById('kw-append').checked;
+  const recentOn = document.getElementById('kw-recent-only').checked;
+  const mam    = recentOn ? (parseInt(document.getElementById('kw-recent-mins').value) || 20) : 0;
   const kw     = document.getElementById('kw-keywords').value
                    .split('\n').map(s => s.trim()).filter(Boolean);
   const btn    = document.getElementById('kw-btn');
@@ -1648,7 +1667,8 @@ async function scrapeByKeywords() {
   const r = await fetch('/api/scrape/keywords', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ tweet_url: url, keywords: kw, min_length: ml, limit,
+    body: JSON.stringify({ tweet_url: url, keywords: kw, min_length: ml,
+                           max_age_minutes: mam, limit,
                            skip_verified: sv, skip_bots: sb, append }),
   }).then(r => r.json()).catch(() => null);
 
