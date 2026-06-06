@@ -802,6 +802,171 @@ def scrape_replies_graphql(tweet_id: str, auth_token: str, ct0: str,
     return {"ok": True, "users": users, "count": len(users)}
 
 
+def scrape_replies_with_keywords(
+    tweet_id: str,
+    auth_token: str,
+    ct0: str,
+    limit: int = 9999,
+    no_admins: bool = False,
+    skip_bots: bool = False,
+    keywords: list = None,      # OR logic — keep reply if ANY keyword found in text
+    progress_cb=None,           # callback(collected, scanned) — called after every page
+) -> dict:
+    """
+    Scrape replies to a tweet, capture the reply TEXT, and filter by keywords.
+    Returns {"ok": True, "users": [{"screen_name":…,"name":…,"text":…,"verified":…}], "count": N}
+    keywords: case-insensitive substring list.  Empty/None = accept every reply.
+    Paginates up to 600 pages (~12 000+ replies) to hit large targets like 5 643.
+    """
+    import urllib.parse as _up
+
+    kw_lower = [k.lower() for k in (keywords or [])]
+
+    def _matches(text: str) -> bool:
+        if not kw_lower:
+            return True
+        t = text.lower()
+        return any(k in t for k in kw_lower)
+
+    hdrs = _headers(auth_token, ct0)
+    last_error = "All TweetDetail query IDs failed"
+    any_qid_ok = False
+
+    for qid in _TWEETDETAIL_QUERY_IDS:
+        _URL = f"https://api.twitter.com/graphql/{qid}/TweetDetail"
+        seen: set = set()
+        users: list = []
+        cursor = None
+        qid_ok = False
+        empty_pages = 0
+        scanned = 0
+
+        for _page in range(600):
+            variables = {
+                "focalTweetId": str(tweet_id),
+                "with_rux_injections": False,
+                "rankingMode": "Relevance",
+                "includePromotedContent": True,
+                "withCommunity": True,
+                "withQuickPromoteEligibilityTweetFields": True,
+                "withBirdwatchNotes": True,
+                "withVoice": True,
+            }
+            if cursor:
+                variables["cursor"] = cursor
+
+            params = _up.urlencode({
+                "variables": json.dumps(variables),
+                "features": _SCRAPE_FEATURES,
+                "fieldToggles": json.dumps({
+                    "withArticleRichContentState": True,
+                    "withArticlePlainText": False,
+                    "withGrokAnalyze": False,
+                    "withDisallowedReplyControls": False,
+                }),
+            })
+            status, body = _http_get(f"{_URL}?{params}", hdrs, retries=3)
+
+            if status == 0:   last_error = body; break
+            if status == 429: last_error = "Rate limited (429)"; break
+            if status in (403, 400): last_error = f"Query {qid} rejected ({status})"; break
+            if status != 200: last_error = f"HTTP {status}: {body[:200]}"; break
+
+            qid_ok = True
+            try:
+                data = json.loads(body)
+            except Exception:
+                last_error = "Invalid JSON"; break
+            if data.get("errors"):
+                last_error = "; ".join(e.get("message","?") for e in data["errors"][:3]); break
+
+            instructions = (
+                data.get("data", {})
+                    .get("threaded_conversation_with_injections_v2", {})
+                    .get("instructions", [])
+            )
+
+            def _extract_tr(tr):
+                """Extract (user_legacy, tweet_full_text) from a tweet_result object."""
+                legacy_u = (tr.get("core", {})
+                              .get("user_results", {})
+                              .get("result", {})
+                              .get("legacy", {}))
+                legacy_t = tr.get("legacy", {})
+                return legacy_u, legacy_t.get("full_text", "")
+
+            next_cursor = None
+            found_this_page = 0
+
+            for instr in instructions:
+                for entry in instr.get("entries", []):
+                    eid = entry.get("entryId", "")
+                    content = entry.get("content", {})
+
+                    if eid == f"tweet-{tweet_id}":
+                        continue
+
+                    candidates = []
+                    if eid.startswith("tweet-"):
+                        tr = content.get("itemContent", {}).get("tweet_results", {}).get("result", {})
+                        candidates = [tr]
+                    elif content.get("entryType") == "TimelineTimelineModule":
+                        for item in content.get("items", []):
+                            tr = (item.get("item", {})
+                                      .get("itemContent", {})
+                                      .get("tweet_results", {})
+                                      .get("result", {}))
+                            candidates.append(tr)
+
+                    for tr in candidates:
+                        legacy_u, text = _extract_tr(tr)
+                        sn = legacy_u.get("screen_name", "").strip()
+                        if not sn or sn.lower() in seen:
+                            continue
+                        scanned += 1
+                        is_verified = (legacy_u.get("verified") or legacy_u.get("is_blue_verified"))
+                        if no_admins and is_verified:
+                            continue
+                        if skip_bots and _is_likely_bot(legacy_u):
+                            continue
+                        if not _matches(text):
+                            continue
+                        seen.add(sn.lower())
+                        users.append({
+                            "screen_name": sn,
+                            "name": legacy_u.get("name", sn),
+                            "text": text[:280],
+                            "verified": bool(is_verified),
+                        })
+                        found_this_page += 1
+
+                    if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
+                        next_cursor = (content.get("value")
+                                       or content.get("itemContent", {}).get("value"))
+
+            if found_this_page == 0:
+                empty_pages += 1
+            else:
+                empty_pages = 0
+
+            if progress_cb:
+                progress_cb(len(users), scanned)
+
+            if len(users) >= limit or not next_cursor or empty_pages >= 5:
+                break
+            cursor = next_cursor
+
+        if qid_ok:
+            any_qid_ok = True
+        if qid_ok and users:
+            break
+
+    if not users:
+        msg = "No matching replies found" if any_qid_ok else last_error
+        return {"ok": True, "users": [], "count": 0, "message": msg}
+    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
+
+
 def _resolve_user_id(username: str, auth_token: str, ct0: str) -> str:
     """Resolve a Twitter screen_name to a numeric user ID via GraphQL."""
     import urllib.parse as _up
