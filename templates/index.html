@@ -518,6 +518,14 @@
             <input id="kw-limit" type="number" min="1" max="99999" value="5643"
               style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
           </div>
+          <div style="flex:0 0 130px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Min message length <span style="color:#6b7280">(chars)</span></label>
+            <input id="kw-min-length" type="number" min="0" max="999" value="80" placeholder="0 = off"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="font-size:11px;color:#6b7280;margin-bottom:10px;margin-top:-6px">
+          ℹ️ A comment is kept if it matches <strong style="color:#9ca3af">any keyword</strong> <em>or</em> its text is <strong style="color:#9ca3af">≥ min-length characters</strong> long (deep/thoughtful message). Set min-length to 0 to disable.
         </div>
         <div style="margin-bottom:10px">
           <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Keywords <span style="color:#6b7280">(one per line — match ANY)</span></label>
@@ -560,6 +568,11 @@ reward received</textarea>
           <div style="background:#1f2937;border-radius:6px;height:8px;overflow:hidden">
             <div id="kw-progress-bar" style="height:100%;background:#0e7490;width:0%;transition:width 0.4s"></div>
           </div>
+        </div>
+        <!-- Matched comment preview feed -->
+        <div id="kw-preview-wrap" style="display:none;margin-top:14px">
+          <div style="font-size:12px;color:#6b7280;margin-bottom:8px;font-weight:600">💬 Matched comments preview (first 50)</div>
+          <div id="kw-preview-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px"></div>
         </div>
       </div>
 
@@ -1607,6 +1620,7 @@ async function clearSavedUsers() {
 async function scrapeByKeywords() {
   const url    = document.getElementById('kw-tweet-url').value.trim();
   const limit  = parseInt(document.getElementById('kw-limit').value) || 5643;
+  const ml     = parseInt(document.getElementById('kw-min-length').value) || 0;
   const sv     = document.getElementById('kw-skip-verified').checked;
   const sb     = document.getElementById('kw-skip-bots').checked;
   const append = document.getElementById('kw-append').checked;
@@ -1618,20 +1632,24 @@ async function scrapeByKeywords() {
   const bar    = document.getElementById('kw-progress-bar');
   const lbl    = document.getElementById('kw-progress-label');
   const cnt    = document.getElementById('kw-progress-counts');
+  const prevWrap = document.getElementById('kw-preview-wrap');
+  const prevList = document.getElementById('kw-preview-list');
 
   if (!url) { status.style.color='#f87171'; status.textContent='Paste a tweet URL first'; return; }
 
   btn.disabled = true; btn.textContent = '⏳ Starting…';
   status.style.color = '#fbbf24';
-  status.textContent = `Starting keyword scrape…`;
+  status.textContent = 'Starting…';
   prog.style.display = '';
   bar.style.width = '0%'; bar.style.background = '#0e7490';
   lbl.textContent = 'Connecting…'; cnt.textContent = '0 matched / 0 scanned';
+  prevWrap.style.display = 'none'; prevList.innerHTML = '';
 
   const r = await fetch('/api/scrape/keywords', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ tweet_url: url, keywords: kw, limit, skip_verified: sv, skip_bots: sb, append }),
+    body: JSON.stringify({ tweet_url: url, keywords: kw, min_length: ml, limit,
+                           skip_verified: sv, skip_bots: sb, append }),
   }).then(r => r.json()).catch(() => null);
 
   if (!r || !r.ok) {
@@ -1640,7 +1658,7 @@ async function scrapeByKeywords() {
     btn.disabled = false; btn.textContent = '💬 Scrape Matching Comments'; return;
   }
 
-  status.textContent = `⏳ Scanning replies… job ${r.job_id}`;
+  status.textContent = `⏳ Scanning replies…`;
   const poll = setInterval(async () => {
     const j = await fetch(`/api/scrape/keywords/${r.job_id}`).then(r => r.json()).catch(() => null);
     if (!j) return;
@@ -1648,14 +1666,37 @@ async function scrapeByKeywords() {
     bar.style.width = pct + '%';
     lbl.textContent = j.message || 'Scanning…';
     cnt.textContent = `${j.collected} matched / ${j.scanned || 0} scanned`;
+
     if (j.status === 'done' || j.status === 'error') {
       clearInterval(poll);
       btn.disabled = false; btn.textContent = '💬 Scrape Matching Comments';
+
       if (j.status === 'done') {
         status.style.color = '#86efac';
         status.textContent = `✅ ${j.collected} matching commenters saved`;
         bar.style.width = '100%'; bar.style.background = '#22c55e';
         loadSavedUsers();
+
+        // Render matched comment preview feed
+        const items = j.preview || [];
+        if (items.length > 0) {
+          prevList.innerHTML = '';
+          items.forEach(u => {
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#111827;border:1px solid #1f2937;border-radius:8px;padding:10px 12px';
+            const esc = t => t.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            card.innerHTML = `
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="font-size:13px;font-weight:600;color:#22d3ee">@${esc(u.screen_name)}</span>
+                ${u.name && u.name !== u.screen_name ? `<span style="font-size:12px;color:#6b7280">${esc(u.name)}</span>` : ''}
+                ${u.verified ? '<span style="font-size:10px;background:#1e3a5f;color:#60a5fa;padding:1px 6px;border-radius:4px">✓ verified</span>' : ''}
+                <span style="font-size:10px;color:#374151;margin-left:auto">${u.text ? u.text.length + ' chars' : ''}</span>
+              </div>
+              <div style="font-size:13px;color:#d1d5db;line-height:1.5;word-break:break-word">${esc(u.text || '')}</div>`;
+            prevList.appendChild(card);
+          });
+          prevWrap.style.display = '';
+        }
       } else {
         status.style.color = '#f87171';
         status.textContent = j.message || '❌ Scrape failed';
