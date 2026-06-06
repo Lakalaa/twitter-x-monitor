@@ -2669,6 +2669,101 @@ def api_scrape_saved():
         return jsonify({"count": 0, "source": None, "users": []})
 
 
+@app.route("/api/scrape/followers", methods=["POST"])
+def api_scrape_followers():
+    """
+    Scrape followers of a Twitter account with optional bot/verified filtering.
+    Body: { "username": "phantom", "limit": 1442, "skip_verified": true, "skip_bots": true, "append": false }
+    append=true merges into existing scraped_users.json instead of replacing.
+    """
+    data          = request.json or {}
+    username      = data.get("username", "").strip().lstrip("@")
+    limit         = data.get("limit", 1442)
+    skip_verified = bool(data.get("skip_verified", True))
+    skip_bots     = bool(data.get("skip_bots", True))
+    append_mode   = bool(data.get("append", False))
+
+    try: limit = int(limit)
+    except (ValueError, TypeError): limit = 1442
+    if not username:
+        return jsonify({"ok": False, "error": "username is required"}), 400
+
+    import uuid
+    job_id = uuid.uuid4().hex[:8]
+    STATE.setdefault("follower_scrape_jobs", {})[job_id] = {
+        "status": "running", "username": username,
+        "collected": 0, "target": limit,
+        "skip_verified": skip_verified, "skip_bots": skip_bots,
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None, "message": f"Connecting to @{username}…",
+    }
+
+    def _run(jid=job_id, uname=username, lim=limit, sv=skip_verified,
+             sb=skip_bots, app_mode=append_mode):
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        from twitter_post import scrape_followers_graphql as _sfg, get_auth_from_config as _gac
+        job = STATE["follower_scrape_jobs"][jid]
+
+        auth_token, ct0 = _gac()
+        if not auth_token or not ct0:
+            job.update({"status": "error",
+                        "message": "❌ No Twitter auth_token/ct0 set — add them in Settings"})
+            return
+
+        job["message"] = f"Fetching followers of @{uname}…"
+        result = _sfg(uname, auth_token, ct0, limit=lim,
+                      skip_verified=sv, skip_bots=sb)
+
+        if not result.get("ok"):
+            job.update({"status": "error",
+                        "message": f"❌ {result.get('error', 'Scrape failed')}"})
+            return
+
+        users = result.get("users", [])
+        job["collected"] = len(users)
+
+        save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+        if app_mode and os.path.exists(save_path):
+            try:
+                with open(save_path) as f:
+                    existing = json.load(f)
+                prev_users = existing.get("users", [])
+                seen_sn = {u["screen_name"].lower() for u in prev_users}
+                merged = prev_users + [u for u in users if u["screen_name"].lower() not in seen_sn]
+                src = existing.get("source", "") + f" + @{uname} followers"
+            except Exception:
+                merged = users
+                src = f"@{uname} followers"
+        else:
+            merged = users
+            src = f"@{uname} followers"
+
+        with open(save_path, "w") as f:
+            json.dump({"source": src, "users": merged}, f, indent=2)
+
+        job.update({
+            "status": "done",
+            "collected": len(users),
+            "total_saved": len(merged),
+            "finished_at": datetime.now().isoformat(),
+            "message": (f"✅ Saved {len(users)} followers of @{uname}"
+                        + (f" (total saved: {len(merged)})" if app_mode else "")),
+        })
+        add_log(f"Follower scrape @{uname}: {len(users)} collected, {len(merged)} total saved")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/scrape/followers/<job_id>")
+def api_scrape_followers_status(job_id):
+    job = STATE.get("follower_scrape_jobs", {}).get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
 @app.route("/api/retweeters", methods=["POST"])
 def api_retweeters():
     data      = request.json or {}
