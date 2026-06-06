@@ -22,17 +22,19 @@ _BEARER = (
 
 # GraphQL query IDs — try in order until one works
 _CREATE_TWEET_QUERY_IDS = [
+    "H-t2v_HvFR07ZBP9aOeKoA",   # current (June 2026)
     "a1p9RWpkYKBjWv_I3WzS-A",
     "SoVnbfCycZ7fERGCwpZkYA",
     "rwpVT1eOpetM8y6CiL5MiQ",
 ]
 
 _LIKE_QUERY_IDS = [
-    "lI07N6Otwv1PhnEgXILM7A",
+    "lI07N6Otwv1PhnEgXILM7A",   # current (June 2026)
     "ZYKSe-w7KEslx3JhSIk5LA",
 ]
 
 _RETWEET_QUERY_IDS = [
+    "mbRO74GrOvSfRcJnlMapnQ",   # current (June 2026)
     "ojPdsZsimiJrUGLR1sjUtA",
     "uBbQzHBYhCNJYCXLECHLkQ",
 ]
@@ -494,6 +496,24 @@ def bulk_engage(
             parts.append(ftags)
         return " ".join(parts) if parts else ""
 
+    # ── Pre-verify proxies once before the loop (parallel, fast) ─────────────
+    import concurrent.futures as _cf
+    _all_raw_proxies = list({e.get("proxy") for e in pool if e.get("proxy")})
+    _live_proxies: list = []
+
+    def _probe(p):
+        r = test_proxy(p, timeout=5)
+        return p if r["alive"] else None
+
+    with _cf.ThreadPoolExecutor(max_workers=150) as _ex:
+        for _p in _ex.map(_probe, _all_raw_proxies):
+            if _p:
+                _live_proxies.append(_p)
+
+    _live_proxy_set = set(_live_proxies)
+    random.shuffle(_live_proxies)
+    # ── End pre-verification ──────────────────────────────────────────────────
+
     results = []
     ok_count = 0
     fail_count = 0
@@ -513,22 +533,17 @@ def bulk_engage(
                 progress_cb(i + 1, total, username, "❌ missing creds")
             continue
 
-        # ── Proxy gate: every account must pass a live proxy check ────────────
-        if not proxy:
-            results.append({"username": username, "action": action, "ok": False, "detail": "no proxy assigned — skipped"})
-            fail_count += 1
-            if progress_cb:
-                progress_cb(i + 1, total, username, "⛔ no proxy")
-            continue
-
-        probe = test_proxy(proxy, timeout=8)
-        if not probe["alive"]:
-            results.append({"username": username, "action": action, "ok": False,
-                             "detail": f"proxy dead ({probe['error']})"})
-            fail_count += 1
-            if progress_cb:
-                progress_cb(i + 1, total, username, f"⛔ proxy dead")
-            continue
+        # ── Proxy gate: use pre-verified live proxy pool ──────────────────────
+        if not proxy or proxy not in _live_proxy_set:
+            # Pick next from live pool (round-robin)
+            if not _live_proxies:
+                results.append({"username": username, "action": action, "ok": False,
+                                 "detail": "no live proxies available"})
+                fail_count += 1
+                if progress_cb:
+                    progress_cb(i + 1, total, username, "⛔ no live proxy")
+                continue
+            proxy = _live_proxies[i % len(_live_proxies)]
         # ── End proxy gate ────────────────────────────────────────────────────
 
         entry_results = []
