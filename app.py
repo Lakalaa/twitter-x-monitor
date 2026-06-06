@@ -2383,12 +2383,13 @@ def api_proxies_test_all():
 @app.route("/api/engage", methods=["POST"])
 def api_engage():
     data = request.json or {}
-    tweet_url     = data.get("tweet_url", "").strip()
-    action        = data.get("action", "like").strip()
-    comment_text  = data.get("comment_text", "").strip()
-    comment_texts = data.get("comment_texts", [])   # rotating list
-    mention       = data.get("mention", "").strip()
-    count         = data.get("count")
+    tweet_url         = data.get("tweet_url", "").strip()
+    action            = data.get("action", "like").strip()
+    comment_text      = data.get("comment_text", "").strip()
+    comment_texts     = data.get("comment_texts", [])
+    mention           = data.get("mention", "").strip()
+    tag_followers_n   = int(data.get("tag_followers_count", 0) or 0)
+    count             = data.get("count")
     try: count = int(count) if count else None
     except (ValueError, TypeError): count = None
 
@@ -2409,13 +2410,25 @@ def api_engage():
     }
 
     def _run(jid=job_id, url=tweet_url, act=action, text=comment_text,
-             texts=comment_texts, tag=mention, n=count):
+             texts=comment_texts, tag=mention, tfn=tag_followers_n, n=count):
         import sys as _sys; _sys.path.insert(0, "tools")
         from twitter_post import bulk_engage, load_account_pool
         job = STATE["engage_jobs"][jid]
         pool = load_account_pool()
         if n: pool = pool[:n]
         job["total"] = len(pool)
+
+        # Load followers pool from saved users list for tagging
+        fpool = []
+        if tfn > 0:
+            save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+            try:
+                with open(save_path) as f:
+                    saved = json.load(f)
+                fpool = saved.get("users", [])
+                job["message"] = f"Loaded {len(fpool)} followers for tagging ({tfn} per comment)"
+            except Exception:
+                job["message"] = "⚠️ No saved followers found — run follower scrape first"
 
         def progress(done, total, username, status_str):
             job["done"] = done
@@ -2425,7 +2438,8 @@ def api_engage():
 
         job["results"] = []
         result = bulk_engage(url, action=act, comment_text=text, comment_texts=texts,
-                             mention=tag, accounts=pool, delay_min=3.0, delay_max=8.0,
+                             mention=tag, tag_n_followers=tfn, followers_pool=fpool,
+                             accounts=pool, delay_min=3.0, delay_max=8.0,
                              progress_cb=progress)
         job.update({
             "status": "done",
