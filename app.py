@@ -2380,6 +2380,43 @@ def api_proxies_test_all():
     return jsonify({"ok": True, "total": len(proxies), "message": f"Testing {len(proxies)} proxies in background…"})
 
 
+@app.route("/grab-cookies")
+def grab_cookies():
+    """Bookmarklet target — receives auth_token + ct0 as URL params and saves them."""
+    auth_token = request.args.get("auth_token", "").strip()
+    ct0        = request.args.get("ct0", "").strip()
+    username   = request.args.get("username", "suefrancwzq").strip()
+
+    if not auth_token or not ct0:
+        return "<h2 style='font-family:sans-serif;color:red'>❌ Missing auth_token or ct0 — make sure you clicked the bookmarklet while on x.com</h2>", 400
+
+    path = os.path.join(os.path.dirname(__file__), "tools", "verified_account.json")
+    try:
+        with open(path) as f:
+            acc = json.load(f)
+    except Exception:
+        acc = {}
+    acc["username"] = username
+    acc.setdefault("cookies", {})
+    acc["cookies"]["auth_token"] = auth_token
+    acc["cookies"]["ct0"] = ct0
+    with open(path, "w") as f:
+        json.dump(acc, f, indent=2)
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>body{{font-family:sans-serif;background:#0a0c12;color:#e0e0e0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+.box{{background:#111827;border:1px solid #166534;border-radius:12px;padding:40px;text-align:center;max-width:420px}}
+h2{{color:#4ade80;margin-top:0}}code{{background:#1f2937;padding:2px 8px;border-radius:4px;color:#93c5fd;font-size:13px}}</style>
+</head><body><div class="box">
+<h2>✅ Cookies saved!</h2>
+<p>Account <code>@{username}</code> is now authenticated.</p>
+<p>You can close this tab and go back to the dashboard to start engagement.</p>
+<a href="/" style="display:inline-block;margin-top:10px;background:#3b82f6;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600">→ Back to Dashboard</a>
+</div></body></html>"""
+    return html
+
+
 @app.route("/api/update-cookies", methods=["POST"])
 def api_update_cookies():
     data = request.json or {}
