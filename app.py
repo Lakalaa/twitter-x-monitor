@@ -2048,6 +2048,106 @@ def api_account_pool():
     })
 
 
+# ── Proxy management ──────────────────────────────────────────────────────────
+_PROXIES_FILE = os.path.join(os.path.dirname(__file__), "tools", "proxies.json")
+_COOKIES_FILE = os.path.join(os.path.dirname(__file__), "tools", "cookies.json")
+
+
+def _load_proxies() -> list:
+    try:
+        with open(_PROXIES_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_proxies(proxies: list):
+    with open(_PROXIES_FILE, "w") as f:
+        json.dump(proxies, f, indent=2)
+
+
+def _load_pool() -> list:
+    try:
+        with open(_COOKIES_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_pool(pool: list):
+    with open(_COOKIES_FILE, "w") as f:
+        json.dump(pool, f, indent=2)
+
+
+@app.route("/api/proxies", methods=["GET"])
+def api_proxies_get():
+    proxies = _load_proxies()
+    pool    = _load_pool()
+    assigned = sum(1 for a in pool if a.get("proxy"))
+    return jsonify({
+        "proxies": proxies,
+        "total": len(proxies),
+        "accounts_total": len(pool),
+        "accounts_assigned": assigned,
+    })
+
+
+@app.route("/api/proxies", methods=["PUT"])
+def api_proxies_put():
+    data    = request.json or {}
+    raw     = data.get("proxies", [])
+    cleaned = []
+    for p in raw:
+        p = str(p).strip()
+        if p and (p.startswith("http://") or p.startswith("https://") or p.startswith("socks5://")):
+            cleaned.append(p)
+    _save_proxies(cleaned)
+    add_log(f"Proxy list updated: {len(cleaned)} proxies saved")
+    return jsonify({"ok": True, "saved": len(cleaned)})
+
+
+@app.route("/api/proxies/assign", methods=["POST"])
+def api_proxies_assign():
+    """Assign proxies to accounts round-robin. Clears assignments if no proxies."""
+    proxies = _load_proxies()
+    pool    = _load_pool()
+    if not pool:
+        return jsonify({"ok": False, "error": "Account pool is empty"}), 400
+
+    if not proxies:
+        # Clear all proxy assignments
+        for acc in pool:
+            acc.pop("proxy", None)
+        _save_pool(pool)
+        add_log("Proxy assignments cleared (no proxies)")
+        return jsonify({"ok": True, "assigned": 0, "message": "All proxy assignments cleared"})
+
+    # Assign round-robin: account[i] → proxies[i % len(proxies)]
+    for i, acc in enumerate(pool):
+        acc["proxy"] = proxies[i % len(proxies)]
+    _save_pool(pool)
+
+    unique = min(len(proxies), len(pool))
+    shared = max(0, len(pool) - len(proxies))
+    msg = f"Assigned proxies to {len(pool)} accounts ({unique} unique"
+    if shared:
+        msg += f", {shared} accounts share a proxy"
+    msg += ")"
+    add_log(msg)
+    return jsonify({"ok": True, "assigned": len(pool), "unique": unique, "shared": shared, "message": msg})
+
+
+@app.route("/api/proxies/clear", methods=["POST"])
+def api_proxies_clear():
+    """Remove proxy assignment from every account."""
+    pool = _load_pool()
+    for acc in pool:
+        acc.pop("proxy", None)
+    _save_pool(pool)
+    add_log("All proxy assignments cleared")
+    return jsonify({"ok": True, "message": "Proxy assignments cleared from all accounts"})
+
+
 @app.route("/api/engage", methods=["POST"])
 def api_engage():
     data = request.json or {}
