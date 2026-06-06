@@ -365,43 +365,62 @@
 
     <!-- COOKIE IMPORT -->
     <div class="card" style="border:1px solid #1d4ed8;background:#0a0f1e">
-      <h2 style="margin-bottom:6px">🍪 Update Account Cookies</h2>
+      <h2 style="margin-bottom:6px">🍪 Refresh Account Cookies</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:16px">
-        Twitter session cookies expire. To refresh: open <strong>x.com</strong> in your browser → F12 DevTools → Application → Cookies → copy <code>auth_token</code> and <code>ct0</code>.
+        Twitter session cookies expire. Use the one-click bookmarklet below — no DevTools needed.
       </p>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <div style="flex:1;min-width:160px">
-            <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">Username (optional)</div>
-            <input id="ck-username" placeholder="suefrancwzq"
-              style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none">
-          </div>
-          <div style="flex:0 0 auto;align-self:flex-end">
-            <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">Target</div>
-            <select id="ck-target" style="background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none">
-              <option value="verified">Verified account (single)</option>
-              <option value="pool">Account pool (by username)</option>
-            </select>
-          </div>
-        </div>
-        <div>
-          <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">auth_token</div>
-          <input id="ck-auth-token" placeholder="Paste auth_token cookie value here…"
-            style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none;font-family:monospace">
-        </div>
-        <div>
-          <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">ct0</div>
-          <input id="ck-ct0" placeholder="Paste ct0 cookie value here…"
-            style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none;font-family:monospace">
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <button onclick="saveCookies()"
-            style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:9px 22px;font-size:14px;font-weight:600;cursor:pointer">
-            💾 Save Cookies
-          </button>
-          <span id="ck-msg" style="font-size:13px;color:#4ade80;display:none"></span>
-        </div>
+
+      <!-- BOOKMARKLET METHOD -->
+      <div style="background:#0d1a2e;border:1px solid #1d4ed8;border-radius:10px;padding:16px;margin-bottom:16px">
+        <div style="font-size:13px;color:#93c5fd;font-weight:600;margin-bottom:10px">⚡ One-Click Method (recommended)</div>
+        <ol style="font-size:13px;color:#9ca3af;margin:0 0 14px 0;padding-left:20px;line-height:2">
+          <li>Drag this button to your bookmarks bar: &nbsp;
+            <a id="bookmarklet-link" href="#" style="display:inline-block;background:#1d4ed8;color:#fff;padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;cursor:grab">
+              📌 Grab Twitter Cookies
+            </a>
+          </li>
+          <li>Open <strong style="color:#e0e0e0">x.com</strong> in your browser and log in as the account you want</li>
+          <li>Click the <strong style="color:#93c5fd">Grab Twitter Cookies</strong> bookmark — done!</li>
+        </ol>
+        <div style="font-size:11px;color:#4b5563">The bookmarklet reads your cookies directly and sends them here automatically.</div>
       </div>
+
+      <!-- MANUAL METHOD -->
+      <details style="margin-bottom:4px">
+        <summary style="font-size:13px;color:#6b7280;cursor:pointer;user-select:none">▸ Manual paste (if bookmarklet doesn't work)</summary>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:160px">
+              <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">Username</div>
+              <input id="ck-username" placeholder="suefrancwzq"
+                style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none">
+            </div>
+            <div style="flex:0 0 auto;align-self:flex-end">
+              <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">Target</div>
+              <select id="ck-target" style="background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none">
+                <option value="verified">Verified account</option>
+                <option value="pool">Account pool</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">auth_token</div>
+            <input id="ck-auth-token" placeholder="Paste auth_token cookie value…"
+              style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none;font-family:monospace">
+          </div>
+          <div>
+            <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">ct0</div>
+            <input id="ck-ct0" placeholder="Paste ct0 cookie value…"
+              style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none;font-family:monospace">
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <button onclick="saveCookies()" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:9px 22px;font-size:14px;font-weight:600;cursor:pointer">
+              💾 Save Cookies
+            </button>
+            <span id="ck-msg" style="font-size:13px;color:#4ade80;display:none"></span>
+          </div>
+        </div>
+      </details>
     </div>
 
     <!-- BULK ENGAGEMENT -->
@@ -958,6 +977,26 @@ function showTab(name) {
 // ── Engagement tab ────────────────────────────────────────────────────────────
 let engJobId = null;
 let engPollInterval = null;
+
+// Build bookmarklet href using current server origin
+(function() {
+  const serverOrigin = window.location.origin;
+  const code = `(function(){
+    var c={};
+    document.cookie.split(';').forEach(function(p){
+      var kv=p.trim().split('=');
+      if(kv.length>=2){c[kv[0].trim()]=kv.slice(1).join('=').trim();}
+    });
+    var at=c['auth_token']||'';
+    var ct=c['ct0']||'';
+    if(!at||!ct){alert('Not logged in to X.com — please log in first then click again.');return;}
+    var un=document.title.match(/@([\\w]+)/);
+    var user=un?un[1]:'suefrancwzq';
+    window.open('${serverOrigin}/grab-cookies?username='+user+'&auth_token='+encodeURIComponent(at)+'&ct0='+encodeURIComponent(ct),'_blank');
+  })();`;
+  const el = document.getElementById('bookmarklet-link');
+  if (el) el.href = 'javascript:' + code;
+})();
 
 async function saveCookies() {
   const username   = document.getElementById('ck-username').value.trim();
