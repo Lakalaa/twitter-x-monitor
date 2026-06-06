@@ -352,6 +352,56 @@ def extract_tweet_id(url_or_id: str) -> str:
     return s
 
 
+def test_proxy(proxy: str, timeout: int = 8) -> dict:
+    """
+    Check if a proxy is alive by making a GET to http://ip-api.com/json through it.
+    Returns {"alive": bool, "ms": int, "ip": str, "country": str, "error": str}
+    Fast-fails within `timeout` seconds.
+    """
+    import time as _t
+    if not proxy:
+        return {"alive": False, "ms": 0, "ip": "", "country": "", "error": "no proxy configured"}
+    proxies = _proxy_dict(proxy)
+    t0 = _t.time()
+    try:
+        if _HAS_CURL:
+            resp = _curl.get(
+                "http://ip-api.com/json",
+                proxies=proxies,
+                impersonate="chrome124",
+                timeout=timeout,
+            )
+            ms = int((_t.time() - t0) * 1000)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "alive": True, "ms": ms,
+                    "ip": data.get("query", ""),
+                    "country": data.get("countryCode", ""),
+                    "error": "",
+                }
+            return {"alive": False, "ms": ms, "ip": "", "country": "", "error": f"HTTP {resp.status_code}"}
+        else:
+            import urllib.request as _ur
+            handler = _ur.ProxyHandler(proxies)
+            opener  = _ur.build_opener(handler)
+            req = _ur.Request("http://ip-api.com/json",
+                              headers={"User-Agent": "Mozilla/5.0"})
+            with opener.open(req, timeout=timeout) as r:
+                ms = int((_t.time() - t0) * 1000)
+                import json as _j
+                data = _j.loads(r.read())
+                return {
+                    "alive": True, "ms": ms,
+                    "ip": data.get("query", ""),
+                    "country": data.get("countryCode", ""),
+                    "error": "",
+                }
+    except Exception as exc:
+        ms = int((_t.time() - t0) * 1000)
+        return {"alive": False, "ms": ms, "ip": "", "country": "", "error": str(exc)[:120]}
+
+
 def load_account_pool(cookies_file: str = "tools/cookies.json") -> list:
     """Load the multi-account pool from cookies.json."""
     if not os.path.exists(cookies_file):
@@ -422,6 +472,24 @@ def bulk_engage(
             if progress_cb:
                 progress_cb(i + 1, total, username, "❌ missing creds")
             continue
+
+        # ── Proxy gate: every account must pass a live proxy check ────────────
+        if not proxy:
+            results.append({"username": username, "action": action, "ok": False, "detail": "no proxy assigned — skipped"})
+            fail_count += 1
+            if progress_cb:
+                progress_cb(i + 1, total, username, "⛔ no proxy")
+            continue
+
+        probe = test_proxy(proxy, timeout=8)
+        if not probe["alive"]:
+            results.append({"username": username, "action": action, "ok": False,
+                             "detail": f"proxy dead ({probe['error']})"})
+            fail_count += 1
+            if progress_cb:
+                progress_cb(i + 1, total, username, f"⛔ proxy dead")
+            continue
+        # ── End proxy gate ────────────────────────────────────────────────────
 
         entry_results = []
 
