@@ -401,17 +401,40 @@
           </div>
         </div>
         <div id="eng-comment-fields">
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <div style="flex:0 0 180px">
-              <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">@Mention (optional)</label>
-              <input id="eng-mention" type="text" placeholder="@username"
-                style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          <!-- @Mention -->
+          <div style="margin-bottom:10px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">@Mention (optional) — prepended to every comment</label>
+            <input id="eng-mention" type="text" placeholder="@username"
+              style="width:260px;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <!-- Mode toggle -->
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <button id="eng-mode-single" onclick="setCommentMode('single')"
+              style="padding:6px 16px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;border:2px solid #3b82f6;background:#3b82f6;color:#fff">
+              ✏️ Same for all
+            </button>
+            <button id="eng-mode-rotate" onclick="setCommentMode('rotate')"
+              style="padding:6px 16px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;border:2px solid #374151;background:transparent;color:#9ca3af">
+              🔀 Rotating (different per account)
+            </button>
+          </div>
+          <!-- Single comment -->
+          <div id="eng-single-wrap">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Comment text</label>
+            <input id="eng-comment" type="text" placeholder="Great post! 🔥"
+              style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <!-- Rotating comments -->
+          <div id="eng-rotate-wrap" style="display:none">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:4px">
+              Comment list <span style="color:#6b7280">— one per line, each account gets a different one at random</span>
+            </label>
+            <div style="font-size:11px;color:#4b5563;margin-bottom:6px">
+              <span id="eng-rotate-count" style="color:#60a5fa;font-weight:600">0</span> messages · 569 accounts will cycle through them randomly
             </div>
-            <div style="flex:1;min-width:200px">
-              <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Comment text</label>
-              <input id="eng-comment" type="text" placeholder="Great post! 🔥"
-                style="width:100%;background:#0a0c12;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
-            </div>
+            <textarea id="eng-comments-list" rows="8" oninput="updateRotateCount()"
+              style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:8px;color:#e0e0e0;font-family:monospace;font-size:12px;padding:10px;resize:vertical;outline:none"
+              placeholder="Great partnership! 🔥 SOL to the moon 🚀&#10;Loving this project, keep it up! 💪&#10;Best crypto collab of the year 🎉&#10;This is huge for the ecosystem! 🌐&#10;Received my SOL — thank you! 🙏&#10;Amazing team behind this 👏&#10;Bullish on SOL! 💎&#10;Incredible move, well done! 🚀"></textarea>
           </div>
         </div>
         <button onclick="startEngage()" id="eng-btn"
@@ -876,6 +899,25 @@ function showTab(name) {
 let engJobId = null;
 let engPollInterval = null;
 
+function setCommentMode(mode) {
+  const isSingle = mode === 'single';
+  document.getElementById('eng-single-wrap').style.display = isSingle ? '' : 'none';
+  document.getElementById('eng-rotate-wrap').style.display = isSingle ? 'none' : '';
+  document.getElementById('eng-mode-single').style.background  = isSingle ? '#3b82f6' : 'transparent';
+  document.getElementById('eng-mode-single').style.color       = isSingle ? '#fff' : '#9ca3af';
+  document.getElementById('eng-mode-single').style.borderColor = isSingle ? '#3b82f6' : '#374151';
+  document.getElementById('eng-mode-rotate').style.background  = !isSingle ? '#3b82f6' : 'transparent';
+  document.getElementById('eng-mode-rotate').style.color       = !isSingle ? '#fff' : '#9ca3af';
+  document.getElementById('eng-mode-rotate').style.borderColor = !isSingle ? '#3b82f6' : '#374151';
+  if (!isSingle) updateRotateCount();
+}
+
+function updateRotateCount() {
+  const lines = document.getElementById('eng-comments-list').value
+    .split('\n').filter(s => s.trim());
+  document.getElementById('eng-rotate-count').textContent = lines.length;
+}
+
 function onEngActionChange() {
   const action = document.querySelector('input[name="eng-action"]:checked').value;
   const hideComments = (action === 'like' || action === 'retweet');
@@ -892,23 +934,36 @@ function onEngActionChange() {
 
 function initEngageTab() {
   onEngActionChange();
+  setCommentMode('single');
 }
 
 async function startEngage() {
   const url     = document.getElementById('eng-tweet-url').value.trim();
   const action  = document.querySelector('input[name="eng-action"]:checked').value;
-  const comment = document.getElementById('eng-comment').value.trim();
   const mention = document.getElementById('eng-mention').value.trim();
   const count   = document.getElementById('eng-count').value.trim();
+  const isRotate = document.getElementById('eng-rotate-wrap').style.display !== 'none';
+
+  let comment = '';
+  let commentTexts = [];
+  if (isRotate) {
+    commentTexts = document.getElementById('eng-comments-list').value
+      .split('\n').map(s => s.trim()).filter(Boolean);
+  } else {
+    comment = document.getElementById('eng-comment').value.trim();
+  }
 
   if (!url) { alert('Please enter a tweet URL'); return; }
-  if (action !== 'like' && action !== 'retweet' && !comment && !mention) { alert('Please enter a comment or @mention'); return; }
+  if (action !== 'like' && action !== 'retweet' && !comment && !commentTexts.length && !mention) {
+    alert('Please enter at least one comment message'); return;
+  }
 
   const btn = document.getElementById('eng-btn');
   btn.disabled = true;
   btn.textContent = '⏳ Starting…';
 
-  const body = { tweet_url: url, action, comment_text: comment, mention };
+  const body = { tweet_url: url, action, comment_text: comment,
+                 comment_texts: commentTexts, mention };
   if (count) body.count = parseInt(count);
   const res = await fetch('/api/engage', {
     method: 'POST', headers: {'Content-Type':'application/json'},
