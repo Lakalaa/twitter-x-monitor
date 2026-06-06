@@ -2779,9 +2779,10 @@ def api_scrape_keywords():
     """
     data          = request.json or {}
     tweet_url     = data.get("tweet_url", "").strip()
-    keywords      = data.get("keywords", [])
-    min_length    = data.get("min_length", 0)
-    limit         = data.get("limit", 5643)
+    keywords        = data.get("keywords", [])
+    min_length      = data.get("min_length", 0)
+    max_age_minutes = data.get("max_age_minutes", 0)
+    limit           = data.get("limit", 5643)
     skip_verified = bool(data.get("skip_verified", True))
     skip_bots     = bool(data.get("skip_bots", True))
     append_mode   = bool(data.get("append", False))
@@ -2806,7 +2807,7 @@ def api_scrape_keywords():
     }
 
     def _run(jid=job_id, tid=tweet_id, url=tweet_url, kw=keywords, ml=min_length,
-             lim=limit, sv=skip_verified, sb=skip_bots, app_mode=append_mode):
+             mam=max_age_minutes, lim=limit, sv=skip_verified, sb=skip_bots, app_mode=append_mode):
         import sys as _sys
         _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
         from twitter_post import scrape_replies_with_keywords as _srk, get_auth_from_config as _gac
@@ -2822,6 +2823,8 @@ def api_scrape_keywords():
             parts.append(", ".join(f'"{k}"' for k in kw[:4]))
         if ml:
             parts.append(f"long messages (≥{ml} chars)")
+        if mam:
+            parts.append(f"posted within {mam} mins")
         job["message"] = f"Scanning replies — filters: {'; '.join(parts) or 'all'}…"
         job["preview"] = []
 
@@ -2832,7 +2835,8 @@ def api_scrape_keywords():
 
         result = _srk(tid, auth_token, ct0,
                       limit=lim, no_admins=sv, skip_bots=sb,
-                      keywords=kw, min_length=int(ml or 0), progress_cb=_progress)
+                      keywords=kw, min_length=int(ml or 0),
+                      max_age_minutes=int(mam or 0), progress_cb=_progress)
 
         users = result.get("users", [])
         job["collected"] = len(users)
