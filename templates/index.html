@@ -363,6 +363,47 @@
   <!-- ENGAGE -->
   <div class="panel" id="tab-engage">
 
+    <!-- COOKIE IMPORT -->
+    <div class="card" style="border:1px solid #1d4ed8;background:#0a0f1e">
+      <h2 style="margin-bottom:6px">🍪 Update Account Cookies</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:16px">
+        Twitter session cookies expire. To refresh: open <strong>x.com</strong> in your browser → F12 DevTools → Application → Cookies → copy <code>auth_token</code> and <code>ct0</code>.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:160px">
+            <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">Username (optional)</div>
+            <input id="ck-username" placeholder="suefrancwzq"
+              style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none">
+          </div>
+          <div style="flex:0 0 auto;align-self:flex-end">
+            <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">Target</div>
+            <select id="ck-target" style="background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none">
+              <option value="verified">Verified account (single)</option>
+              <option value="pool">Account pool (by username)</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">auth_token</div>
+          <input id="ck-auth-token" placeholder="Paste auth_token cookie value here…"
+            style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none;font-family:monospace">
+        </div>
+        <div>
+          <div style="font-size:12px;color:#9ca3af;margin-bottom:4px">ct0</div>
+          <input id="ck-ct0" placeholder="Paste ct0 cookie value here…"
+            style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #374151;border-radius:6px;color:#e0e0e0;font-size:13px;padding:8px 10px;outline:none;font-family:monospace">
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <button onclick="saveCookies()"
+            style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:9px 22px;font-size:14px;font-weight:600;cursor:pointer">
+            💾 Save Cookies
+          </button>
+          <span id="ck-msg" style="font-size:13px;color:#4ade80;display:none"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- BULK ENGAGEMENT -->
     <div class="card">
       <h2>🚀 Bulk Engagement</h2>
@@ -917,6 +958,40 @@ function showTab(name) {
 // ── Engagement tab ────────────────────────────────────────────────────────────
 let engJobId = null;
 let engPollInterval = null;
+
+async function saveCookies() {
+  const username   = document.getElementById('ck-username').value.trim();
+  const auth_token = document.getElementById('ck-auth-token').value.trim();
+  const ct0        = document.getElementById('ck-ct0').value.trim();
+  const target     = document.getElementById('ck-target').value;
+  const msg        = document.getElementById('ck-msg');
+
+  if (!auth_token || !ct0) {
+    msg.style.color = '#f87171';
+    msg.textContent = '❌ Both auth_token and ct0 are required';
+    msg.style.display = '';
+    return;
+  }
+  msg.style.color = '#9ca3af';
+  msg.textContent = 'Saving…';
+  msg.style.display = '';
+
+  const res = await fetch('/api/update-cookies', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ username, auth_token, ct0, target })
+  }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }));
+
+  if (res.ok) {
+    msg.style.color = '#4ade80';
+    msg.textContent = '✅ ' + res.message;
+    document.getElementById('ck-auth-token').value = '';
+    document.getElementById('ck-ct0').value = '';
+  } else {
+    msg.style.color = '#f87171';
+    msg.textContent = '❌ ' + res.error;
+  }
+}
 
 function toggleTagFollowers() {
   const on  = document.getElementById('eng-tag-followers').checked;
