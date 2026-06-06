@@ -503,6 +503,51 @@
         <strong style="color:#fff">Step 2</strong> tags them 5 at a time under any post you choose.
       </p>
 
+      <!-- Scrape Followers by Account -->
+      <div style="background:#0a0c12;border:1px solid #7c3aed;border-radius:10px;padding:16px;margin-bottom:14px">
+        <div style="font-size:13px;font-weight:600;color:#a78bfa;margin-bottom:4px">👥 Scrape Followers by Account</div>
+        <div style="font-size:12px;color:#6b7280;margin-bottom:12px">Collect real members only — no bots, no verified/admin accounts. Saves to the user list below for tagging.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+          <div style="flex:1;min-width:160px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Twitter username</label>
+            <input id="sf-username" type="text" placeholder="phantom"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 110px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Count</label>
+            <input id="sf-limit" type="number" min="1" max="9999" value="1442"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#d1d5db">
+            <input type="checkbox" id="sf-skip-verified" checked style="accent-color:#8b5cf6;width:14px;height:14px"> Skip verified / blue-tick
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#d1d5db">
+            <input type="checkbox" id="sf-skip-bots" checked style="accent-color:#8b5cf6;width:14px;height:14px"> Skip bots &amp; new accounts
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#d1d5db">
+            <input type="checkbox" id="sf-append" style="accent-color:#8b5cf6;width:14px;height:14px"> Append to existing list
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button onclick="scrapeFollowers()" id="sf-btn"
+            style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer">
+            👥 Scrape Followers
+          </button>
+          <span id="sf-status" style="font-size:13px;color:#6b7280"></span>
+        </div>
+        <div id="sf-progress" style="display:none;margin-top:12px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#9ca3af;margin-bottom:4px">
+            <span id="sf-progress-label">Fetching…</span>
+            <span id="sf-progress-count">0 collected</span>
+          </div>
+          <div style="background:#1f2937;border-radius:6px;height:8px;overflow:hidden">
+            <div id="sf-progress-bar" style="height:100%;background:#7c3aed;width:0%;transition:width 0.4s"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Currently saved banner -->
       <div id="sc-current-banner" style="border-radius:8px;padding:12px 14px;margin-bottom:14px;display:none">
         <div style="font-size:12px;color:#9ca3af;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Currently Saved</div>
@@ -1497,6 +1542,70 @@ async function clearSavedUsers() {
   if (!confirm('Clear all saved users? This cannot be undone.')) return;
   await fetch('/api/scrape/clear', { method: 'POST' });
   loadSavedUsers();
+}
+
+async function scrapeFollowers() {
+  const username = document.getElementById('sf-username').value.trim().replace(/^@/, '');
+  const limit    = parseInt(document.getElementById('sf-limit').value) || 1442;
+  const sv       = document.getElementById('sf-skip-verified').checked;
+  const sb       = document.getElementById('sf-skip-bots').checked;
+  const append   = document.getElementById('sf-append').checked;
+  const btn      = document.getElementById('sf-btn');
+  const status   = document.getElementById('sf-status');
+  const progress = document.getElementById('sf-progress');
+  const bar      = document.getElementById('sf-progress-bar');
+  const label    = document.getElementById('sf-progress-label');
+  const count    = document.getElementById('sf-progress-count');
+
+  if (!username) { status.style.color='#f87171'; status.textContent='Enter a username first'; return; }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Scraping…';
+  status.style.color = '#fbbf24';
+  status.textContent = `Starting scrape of @${username}…`;
+  progress.style.display = '';
+  bar.style.width = '0%';
+  label.textContent = `Fetching followers of @${username}…`;
+  count.textContent = '0 collected';
+
+  const r = await fetch('/api/scrape/followers', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ username, limit, skip_verified: sv, skip_bots: sb, append }),
+  }).then(r => r.json()).catch(() => null);
+
+  if (!r || !r.ok) {
+    status.style.color = '#f87171';
+    status.textContent = '❌ ' + (r && r.error ? r.error : 'Failed to start');
+    btn.disabled = false; btn.textContent = '👥 Scrape Followers';
+    return;
+  }
+
+  const jobId = r.job_id;
+  status.textContent = `⏳ Scraping @${username}… (job ${jobId})`;
+
+  const poll = setInterval(async () => {
+    const j = await fetch(`/api/scrape/followers/${jobId}`).then(r => r.json()).catch(() => null);
+    if (!j) return;
+    const pct = j.target > 0 ? Math.min(100, Math.round(j.collected / j.target * 100)) : 0;
+    bar.style.width = pct + '%';
+    label.textContent = j.message || `Fetching @${username}…`;
+    count.textContent = `${j.collected} / ${j.target} collected`;
+    if (j.status === 'done' || j.status === 'error') {
+      clearInterval(poll);
+      btn.disabled = false; btn.textContent = '👥 Scrape Followers';
+      if (j.status === 'done') {
+        status.style.color = '#86efac';
+        status.textContent = `✅ ${j.collected} followers of @${username} saved`;
+        bar.style.width = '100%';
+        bar.style.background = '#22c55e';
+        loadSavedUsers();
+      } else {
+        status.style.color = '#f87171';
+        status.textContent = j.message || '❌ Scrape failed';
+      }
+    }
+  }, 3000);
 }
 
 // ── Tag Followers / Following ─────────────────────────────────────────────────
