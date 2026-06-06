@@ -419,6 +419,8 @@ def bulk_engage(
     comment_text: str = "",
     comment_texts: list = None,   # rotating list — one per account (random pick each time)
     mention: str = "",            # @username to prepend to every comment
+    tag_n_followers: int = 0,     # append N follower @mentions to each comment
+    followers_pool: list = None,  # list of screen_names to pick from for tagging
     accounts: list = None,        # subset of pool; if None, uses full pool
     delay_min: float = 3.0,
     delay_max: float = 8.0,
@@ -452,13 +454,34 @@ def bulk_engage(
     if _texts:
         random.shuffle(_texts)
 
+    # Normalise followers pool — flat list of screen_names, shuffle for variety
+    _fpool = []
+    for u in (followers_pool or []):
+        sn = (u if isinstance(u, str) else u.get("screen_name", "")).strip().lstrip("@")
+        if sn:
+            _fpool.append(sn)
+    random.shuffle(_fpool)
+    _fn = max(0, int(tag_n_followers or 0))
+    # Track global follower index so consecutive accounts get different followers
+    _fi = [0]   # mutable box so inner function can mutate
+
     def _pick_text(index: int) -> str:
         """Return the comment for this account: rotating list > single text > ""."""
         if _texts:
             return _texts[index % len(_texts)]
         return comment_text
 
-    # Build comment text: optional @mention prefix
+    def _pick_followers() -> str:
+        """Pick _fn unique followers from the pool, cycling if needed."""
+        if not _fpool or _fn == 0:
+            return ""
+        picks = []
+        for _ in range(_fn):
+            picks.append("@" + _fpool[_fi[0] % len(_fpool)])
+            _fi[0] += 1
+        return " ".join(picks)
+
+    # Build comment text: optional @mention prefix + body + follower tags
     def build_comment(base_text: str) -> str:
         parts = []
         if mention:
@@ -466,6 +489,9 @@ def bulk_engage(
             parts.append(tag)
         if base_text:
             parts.append(base_text)
+        ftags = _pick_followers()
+        if ftags:
+            parts.append(ftags)
         return " ".join(parts) if parts else ""
 
     results = []
