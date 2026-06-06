@@ -2167,13 +2167,17 @@ def api_proxies_get():
     pool    = _load_pool()
     assigned = sum(1 for a in pool if a.get("proxy"))
 
-    # Build country breakdown (exclude Africa)
     from collections import Counter
     country_counts = Counter()
     africa_count   = 0
     ungeo_count    = 0
+    alive_count    = 0
+    dead_count     = 0
+    untested_count = 0
     for p in proxies:
-        cc = p.get("country_code", "") if isinstance(p, dict) else ""
+        if not isinstance(p, dict):
+            continue
+        cc = p.get("country_code", "")
         if not cc:
             ungeo_count += 1
         elif cc in _AFRICA_CODES:
@@ -2181,6 +2185,15 @@ def api_proxies_get():
         else:
             country_counts[f"{p.get('country','?')} ({cc})"] += 1
 
+        alive = p.get("alive")
+        if alive is True:
+            alive_count += 1
+        elif alive is False:
+            dead_count += 1
+        else:
+            untested_count += 1
+
+    test_job = STATE.get("proxy_test_job", {})
     return jsonify({
         "proxies": proxies,
         "total": len(proxies),
@@ -2189,6 +2202,10 @@ def api_proxies_get():
         "africa_filtered": africa_count,
         "ungeolocated": ungeo_count,
         "country_breakdown": dict(country_counts.most_common(20)),
+        "alive": alive_count,
+        "dead": dead_count,
+        "untested": untested_count,
+        "test_job": test_job,
     })
 
 
@@ -2299,6 +2316,68 @@ def api_proxies_clear():
     _save_pool(pool)
     add_log("All proxy assignments cleared")
     return jsonify({"ok": True, "message": "Proxy assignments cleared from all accounts"})
+
+
+@app.route("/api/proxies/test-all", methods=["POST"])
+def api_proxies_test_all():
+    """
+    Test all proxies concurrently in a background thread.
+    Updates proxies.json with alive/dead/ms for each entry.
+    Poll GET /api/proxies for test_job progress.
+    """
+    if STATE.get("proxy_test_job", {}).get("running"):
+        return jsonify({"ok": False, "error": "Test already running"}), 409
+
+    proxies = _load_proxies()
+    if not proxies:
+        return jsonify({"ok": False, "error": "No proxies loaded"}), 400
+
+    STATE["proxy_test_job"] = {
+        "running": True, "total": len(proxies),
+        "done": 0, "alive": 0, "dead": 0, "started_at": time.time(),
+    }
+
+    def _run_tests():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from tools.twitter_post import test_proxy as _tp
+
+        local_proxies = list(proxies)   # snapshot
+
+        def _check(idx_entry):
+            idx, p = idx_entry
+            if not isinstance(p, dict):
+                return idx, {"alive": False, "ms": 0, "error": "bad entry"}
+            result = _tp(p["url"], timeout=8)
+            return idx, result
+
+        with ThreadPoolExecutor(max_workers=80) as ex:
+            futures = {ex.submit(_check, (i, p)): i for i, p in enumerate(local_proxies)}
+            for fut in as_completed(futures):
+                try:
+                    idx, res = fut.result()
+                    local_proxies[idx]["alive"]       = res["alive"]
+                    local_proxies[idx]["response_ms"] = res.get("ms", 0)
+                    local_proxies[idx]["test_error"]  = res.get("error", "")
+                    job = STATE["proxy_test_job"]
+                    job["done"] += 1
+                    if res["alive"]:
+                        job["alive"] += 1
+                    else:
+                        job["dead"] += 1
+                except Exception:
+                    pass
+
+        _save_proxies(local_proxies)
+        job = STATE["proxy_test_job"]
+        job["running"] = False
+        job["finished_at"] = time.time()
+        add_log(f"Proxy test complete: {job['alive']} alive / {job['dead']} dead out of {job['total']}")
+
+    import threading
+    t = threading.Thread(target=_run_tests, daemon=True)
+    t.start()
+
+    return jsonify({"ok": True, "total": len(proxies), "message": f"Testing {len(proxies)} proxies in background…"})
 
 
 @app.route("/api/engage", methods=["POST"])
