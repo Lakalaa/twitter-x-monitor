@@ -2048,9 +2048,17 @@ def api_account_pool():
     })
 
 
-# ── Proxy management ──────────────────────────────────────────────────────────
+# ── Proxy management (geo-aware) ───────────────────────────────────────────────
 _PROXIES_FILE = os.path.join(os.path.dirname(__file__), "tools", "proxies.json")
 _COOKIES_FILE = os.path.join(os.path.dirname(__file__), "tools", "cookies.json")
+
+# All African country codes — these are filtered out during assignment
+_AFRICA_CODES = {
+    "DZ","AO","BJ","BW","BF","BI","CV","CM","CF","TD","KM","CG","CD","CI",
+    "DJ","EG","GQ","ER","SZ","ET","GA","GM","GH","GN","GW","KE","LS","LR",
+    "LY","MG","MW","ML","MR","MU","YT","MA","MZ","NA","NE","NG","RE","RW",
+    "ST","SN","SL","SO","ZA","SS","SD","TZ","TG","TN","UG","EH","ZM","ZW",
+}
 
 
 def _load_proxies() -> list:
@@ -2079,62 +2087,205 @@ def _save_pool(pool: list):
         json.dump(pool, f, indent=2)
 
 
+def _proxy_host(url: str) -> str:
+    """Extract hostname/IP from a proxy URL."""
+    try:
+        from urllib.parse import urlparse
+        return urlparse(url).hostname or ""
+    except Exception:
+        return ""
+
+
+def _geolocate_proxies(proxy_objs: list) -> list:
+    """
+    Call ip-api.com/batch to fill in country_code/country/region/city for each proxy.
+    proxy_objs: list of {"url": "...", ...}  — modified in-place, returned.
+    Batches of 100 (ip-api.com free limit).
+    """
+    import urllib.request as _ur
+    FIELDS = "status,countryCode,country,regionName,city"
+    need_geo = [p for p in proxy_objs if not p.get("geo_ok")]
+    if not need_geo:
+        return proxy_objs
+
+    for batch_start in range(0, len(need_geo), 100):
+        batch = need_geo[batch_start:batch_start + 100]
+        hosts = [_proxy_host(p["url"]) for p in batch]
+        payload = json.dumps(hosts).encode()
+        try:
+            req = _ur.Request(
+                f"http://ip-api.com/batch?fields={FIELDS}",
+                data=payload, method="POST",
+                headers={"Content-Type": "application/json"})
+            with _ur.urlopen(req, timeout=15) as r:
+                results = json.loads(r.read())
+            for p, geo in zip(batch, results):
+                if geo.get("status") == "success":
+                    p["country_code"] = geo.get("countryCode", "")
+                    p["country"]      = geo.get("country", "")
+                    p["region"]       = geo.get("regionName", "")
+                    p["city"]         = geo.get("city", "")
+                    p["geo_ok"]       = True
+                else:
+                    p["country_code"] = p.get("country_code", "")
+                    p["geo_ok"]       = False
+        except Exception as exc:
+            add_log(f"Geo lookup error (batch {batch_start}): {exc}")
+        time.sleep(1)  # be polite to free API
+
+    return proxy_objs
+
+
+def _interleave_by_country(proxies: list) -> list:
+    """
+    Build an assignment list that cycles through countries so consecutive
+    accounts are always in different countries/regions where possible.
+    """
+    from collections import defaultdict
+    import random
+    buckets = defaultdict(list)
+    for p in proxies:
+        key = p.get("country_code") or "XX"
+        buckets[key].append(p)
+    # Shuffle within each country bucket
+    for v in buckets.values():
+        random.shuffle(v)
+    # Interleave: take 1 from each bucket in turn
+    result = []
+    keys = list(buckets.keys())
+    random.shuffle(keys)
+    while any(buckets[k] for k in keys):
+        for k in keys:
+            if buckets[k]:
+                result.append(buckets[k].pop(0))
+    return result
+
+
 @app.route("/api/proxies", methods=["GET"])
 def api_proxies_get():
     proxies = _load_proxies()
     pool    = _load_pool()
     assigned = sum(1 for a in pool if a.get("proxy"))
+
+    # Build country breakdown (exclude Africa)
+    from collections import Counter
+    country_counts = Counter()
+    africa_count   = 0
+    ungeo_count    = 0
+    for p in proxies:
+        cc = p.get("country_code", "") if isinstance(p, dict) else ""
+        if not cc:
+            ungeo_count += 1
+        elif cc in _AFRICA_CODES:
+            africa_count += 1
+        else:
+            country_counts[f"{p.get('country','?')} ({cc})"] += 1
+
     return jsonify({
         "proxies": proxies,
         "total": len(proxies),
         "accounts_total": len(pool),
         "accounts_assigned": assigned,
+        "africa_filtered": africa_count,
+        "ungeolocated": ungeo_count,
+        "country_breakdown": dict(country_counts.most_common(20)),
     })
 
 
 @app.route("/api/proxies", methods=["PUT"])
 def api_proxies_put():
-    data    = request.json or {}
-    raw     = data.get("proxies", [])
+    """Save proxy list and auto-geolocate all entries."""
+    data = request.json or {}
+    raw  = data.get("proxies", [])
+
+    # Keep existing geo data if URL matches, otherwise create fresh entry
+    existing = {p["url"]: p for p in _load_proxies() if isinstance(p, dict) and "url" in p}
     cleaned = []
     for p in raw:
-        p = str(p).strip()
-        if p and (p.startswith("http://") or p.startswith("https://") or p.startswith("socks5://")):
-            cleaned.append(p)
+        url = str(p).strip() if isinstance(p, str) else str(p.get("url", "")).strip()
+        if not url:
+            continue
+        if not (url.startswith("http://") or url.startswith("https://") or url.startswith("socks5://")):
+            continue
+        if url in existing:
+            cleaned.append(existing[url])
+        else:
+            cleaned.append({"url": url, "country_code": "", "country": "", "region": "", "city": "", "geo_ok": False})
+
+    # Geolocate new entries
+    add_log(f"Geolocating {sum(1 for p in cleaned if not p.get('geo_ok'))} new proxies…")
+    cleaned = _geolocate_proxies(cleaned)
     _save_proxies(cleaned)
-    add_log(f"Proxy list updated: {len(cleaned)} proxies saved")
-    return jsonify({"ok": True, "saved": len(cleaned)})
+
+    non_africa = [p for p in cleaned if p.get("country_code","") not in _AFRICA_CODES]
+    add_log(f"Proxy list updated: {len(cleaned)} total, {len(non_africa)} non-African")
+    return jsonify({"ok": True, "saved": len(cleaned), "usable": len(non_africa)})
+
+
+@app.route("/api/proxies/geolocate", methods=["POST"])
+def api_proxies_geolocate():
+    """Re-geolocate all proxies that are missing geo data."""
+    proxies = _load_proxies()
+    # Reset geo_ok=False to force re-lookup on all
+    force = (request.json or {}).get("force", False)
+    if force:
+        for p in proxies:
+            if isinstance(p, dict):
+                p["geo_ok"] = False
+    proxies = _geolocate_proxies(proxies)
+    _save_proxies(proxies)
+    geolocated = sum(1 for p in proxies if isinstance(p, dict) and p.get("geo_ok"))
+    add_log(f"Geolocated {geolocated}/{len(proxies)} proxies")
+    return jsonify({"ok": True, "geolocated": geolocated, "total": len(proxies)})
 
 
 @app.route("/api/proxies/assign", methods=["POST"])
 def api_proxies_assign():
-    """Assign proxies to accounts round-robin. Clears assignments if no proxies."""
+    """Geo-diverse assignment: filter Africa, spread accounts across different countries."""
     proxies = _load_proxies()
     pool    = _load_pool()
     if not pool:
         return jsonify({"ok": False, "error": "Account pool is empty"}), 400
-
     if not proxies:
-        # Clear all proxy assignments
         for acc in pool:
             acc.pop("proxy", None)
+            acc.pop("proxy_country", None)
         _save_pool(pool)
-        add_log("Proxy assignments cleared (no proxies)")
-        return jsonify({"ok": True, "assigned": 0, "message": "All proxy assignments cleared"})
+        return jsonify({"ok": True, "assigned": 0, "message": "No proxies — assignments cleared"})
 
-    # Assign round-robin: account[i] → proxies[i % len(proxies)]
+    # Filter out African proxies and ungeolocated (treat as unknown)
+    usable = [p for p in proxies if isinstance(p, dict) and p.get("country_code","") not in _AFRICA_CODES]
+    africa_dropped = len(proxies) - len(usable)
+
+    if not usable:
+        return jsonify({"ok": False, "error": "No usable proxies after filtering African IPs"}), 400
+
+    # Interleave by country so adjacent accounts get different countries
+    ordered = _interleave_by_country(usable)
+
+    # Assign: cycle through the geo-diverse ordered list
     for i, acc in enumerate(pool):
-        acc["proxy"] = proxies[i % len(proxies)]
+        proxy_obj = ordered[i % len(ordered)]
+        acc["proxy"]         = proxy_obj["url"]
+        acc["proxy_country"] = proxy_obj.get("country_code", "")
+        acc["proxy_region"]  = proxy_obj.get("region", "")
+
     _save_pool(pool)
 
-    unique = min(len(proxies), len(pool))
-    shared = max(0, len(pool) - len(proxies))
-    msg = f"Assigned proxies to {len(pool)} accounts ({unique} unique"
-    if shared:
-        msg += f", {shared} accounts share a proxy"
-    msg += ")"
+    from collections import Counter
+    country_dist = Counter(acc.get("proxy_country","?") for acc in pool)
+    top = ", ".join(f"{k}:{v}" for k, v in country_dist.most_common(5))
+    msg = (f"Assigned {len(pool)} accounts across {len(country_dist)} countries "
+           f"({africa_dropped} African proxies excluded). Top: {top}")
     add_log(msg)
-    return jsonify({"ok": True, "assigned": len(pool), "unique": unique, "shared": shared, "message": msg})
+    return jsonify({
+        "ok": True,
+        "assigned": len(pool),
+        "countries": len(country_dist),
+        "africa_filtered": africa_dropped,
+        "country_distribution": dict(country_dist.most_common()),
+        "message": msg,
+    })
 
 
 @app.route("/api/proxies/clear", methods=["POST"])
@@ -2143,6 +2294,8 @@ def api_proxies_clear():
     pool = _load_pool()
     for acc in pool:
         acc.pop("proxy", None)
+        acc.pop("proxy_country", None)
+        acc.pop("proxy_region", None)
     _save_pool(pool)
     add_log("All proxy assignments cleared")
     return jsonify({"ok": True, "message": "Proxy assignments cleared from all accounts"})
