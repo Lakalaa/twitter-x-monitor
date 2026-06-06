@@ -2764,6 +2764,119 @@ def api_scrape_followers_status(job_id):
     return jsonify(job)
 
 
+@app.route("/api/scrape/keywords", methods=["POST"])
+def api_scrape_keywords():
+    """
+    Scrape replies to a tweet, filter by keywords, save matching commenters.
+    Body: {
+      "tweet_url": "https://x.com/...",
+      "keywords": ["received", "thank you", "sol", "wallet", "partnership"],
+      "limit": 5643,
+      "skip_verified": true,
+      "skip_bots": true,
+      "append": false
+    }
+    """
+    data          = request.json or {}
+    tweet_url     = data.get("tweet_url", "").strip()
+    keywords      = data.get("keywords", [])
+    limit         = data.get("limit", 5643)
+    skip_verified = bool(data.get("skip_verified", True))
+    skip_bots     = bool(data.get("skip_bots", True))
+    append_mode   = bool(data.get("append", False))
+
+    try: limit = int(limit)
+    except (ValueError, TypeError): limit = 5643
+    if not tweet_url:
+        return jsonify({"ok": False, "error": "tweet_url is required"}), 400
+
+    import re as _re, uuid
+    m = _re.search(r"(?:x|twitter)\.com/[^/]+/status/(\d+)", tweet_url)
+    tweet_id = m.group(1) if m else ""
+    if not tweet_id:
+        return jsonify({"ok": False, "error": "Could not parse tweet ID from URL"}), 400
+
+    job_id = uuid.uuid4().hex[:8]
+    STATE.setdefault("kw_scrape_jobs", {})[job_id] = {
+        "status": "running", "tweet_url": tweet_url,
+        "keywords": keywords, "collected": 0, "scanned": 0, "target": limit,
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None, "message": "Connecting…",
+    }
+
+    def _run(jid=job_id, tid=tweet_id, url=tweet_url, kw=keywords,
+             lim=limit, sv=skip_verified, sb=skip_bots, app_mode=append_mode):
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        from twitter_post import scrape_replies_with_keywords as _srk, get_auth_from_config as _gac
+        job = STATE["kw_scrape_jobs"][jid]
+
+        auth_token, ct0 = _gac()
+        if not auth_token or not ct0:
+            job.update({"status": "error",
+                        "message": "❌ No Twitter auth_token/ct0 — add in Settings"}); return
+
+        kw_label = ", ".join(f'"{k}"' for k in kw[:5]) if kw else "all comments"
+        job["message"] = f"Scanning replies for: {kw_label}…"
+
+        def _progress(collected, scanned):
+            job["collected"] = collected
+            job["scanned"]   = scanned
+            job["message"]   = f"Scanned {scanned} replies — {collected} matched so far…"
+
+        result = _srk(tid, auth_token, ct0,
+                      limit=lim, no_admins=sv, skip_bots=sb,
+                      keywords=kw, progress_cb=_progress)
+
+        users = result.get("users", [])
+        job["collected"] = len(users)
+
+        save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
+        if app_mode and os.path.exists(save_path):
+            try:
+                with open(save_path) as f:
+                    existing = json.load(f)
+                prev = existing.get("users", [])
+                seen_sn = {(u if isinstance(u, str) else u.get("screen_name","")).lower() for u in prev}
+                new_u = [u for u in users if u["screen_name"].lower() not in seen_sn]
+                merged = prev + new_u
+                src = existing.get("source", "") + f" + keyword scrape ({url})"
+            except Exception:
+                merged = users; src = f"keyword scrape ({url})"
+        else:
+            merged = users; src = f"keyword scrape ({url})"
+
+        # Normalize to plain screen_names for compatibility with tagger
+        plain = []
+        for u in merged:
+            if isinstance(u, dict):
+                plain.append(u.get("screen_name", ""))
+            else:
+                plain.append(str(u))
+        plain = [s for s in plain if s]
+
+        with open(save_path, "w") as f:
+            json.dump({"source": src, "users": plain, "_rich": merged}, f, indent=2)
+
+        job.update({
+            "status": "done", "collected": len(users), "total_saved": len(plain),
+            "finished_at": datetime.now().isoformat(),
+            "message": f"✅ {len(users)} matching commenters saved (total: {len(plain)})",
+        })
+        add_log(f"Keyword scrape: {len(users)} matched from {url}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/scrape/keywords/<job_id>")
+def api_scrape_keywords_status(job_id):
+    job = STATE.get("kw_scrape_jobs", {}).get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
 @app.route("/api/retweeters", methods=["POST"])
 def api_retweeters():
     data      = request.json or {}
