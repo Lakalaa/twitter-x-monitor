@@ -810,23 +810,33 @@ def scrape_replies_with_keywords(
     no_admins: bool = False,
     skip_bots: bool = False,
     keywords: list = None,      # OR logic — keep reply if ANY keyword found in text
+    min_length: int = 0,        # also keep replies whose text is >= this many chars (long/deep msgs)
     progress_cb=None,           # callback(collected, scanned) — called after every page
 ) -> dict:
     """
-    Scrape replies to a tweet, capture the reply TEXT, and filter by keywords.
+    Scrape replies to a tweet, capture the reply TEXT, and filter by keywords or length.
+    A reply is kept when it matches ANY keyword  OR  its text length >= min_length.
+    If both keywords and min_length are absent/0, every reply is kept.
     Returns {"ok": True, "users": [{"screen_name":…,"name":…,"text":…,"verified":…}], "count": N}
-    keywords: case-insensitive substring list.  Empty/None = accept every reply.
     Paginates up to 600 pages (~12 000+ replies) to hit large targets like 5 643.
     """
     import urllib.parse as _up
 
     kw_lower = [k.lower() for k in (keywords or [])]
+    use_length = int(min_length or 0)
 
     def _matches(text: str) -> bool:
-        if not kw_lower:
+        # Accept all if no filters set
+        if not kw_lower and use_length == 0:
             return True
+        # Keyword hit
         t = text.lower()
-        return any(k in t for k in kw_lower)
+        if kw_lower and any(k in t for k in kw_lower):
+            return True
+        # Long/deep message hit
+        if use_length > 0 and len(text.strip()) >= use_length:
+            return True
+        return False
 
     hdrs = _headers(auth_token, ct0)
     last_error = "All TweetDetail query IDs failed"
