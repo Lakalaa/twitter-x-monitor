@@ -2380,6 +2380,58 @@ def api_proxies_test_all():
     return jsonify({"ok": True, "total": len(proxies), "message": f"Testing {len(proxies)} proxies in background…"})
 
 
+@app.route("/api/update-cookies", methods=["POST"])
+def api_update_cookies():
+    data = request.json or {}
+    username  = data.get("username", "").strip()
+    auth_token = data.get("auth_token", "").strip()
+    ct0        = data.get("ct0", "").strip()
+    target     = data.get("target", "verified")   # "verified" or "pool"
+
+    if not auth_token or not ct0:
+        return jsonify({"ok": False, "error": "auth_token and ct0 are required"})
+
+    if target == "verified":
+        path = os.path.join(os.path.dirname(__file__), "tools", "verified_account.json")
+        try:
+            with open(path) as f:
+                acc = json.load(f)
+        except Exception:
+            acc = {}
+        if username:
+            acc["username"] = username
+        acc.setdefault("cookies", {})
+        acc["cookies"]["auth_token"] = auth_token
+        acc["cookies"]["ct0"] = ct0
+        with open(path, "w") as f:
+            json.dump(acc, f, indent=2)
+        return jsonify({"ok": True, "message": f"Updated verified account cookies for @{acc.get('username','?')}"})
+
+    elif target == "pool":
+        # Update matching account in cookies.json
+        pool_path = os.path.join(os.path.dirname(__file__), "tools", "cookies.json")
+        try:
+            with open(pool_path) as f:
+                pool = json.load(f)
+        except Exception:
+            return jsonify({"ok": False, "error": "Could not load cookies.json"})
+        updated = 0
+        for acc in pool:
+            if acc.get("username", "").lower() == username.lower():
+                acc.setdefault("cookies", {})
+                acc["cookies"]["auth_token"] = auth_token
+                acc["cookies"]["ct0"] = ct0
+                updated += 1
+        if updated:
+            with open(pool_path, "w") as f:
+                json.dump(pool, f, indent=2)
+            return jsonify({"ok": True, "message": f"Updated cookies for @{username} in pool"})
+        else:
+            return jsonify({"ok": False, "error": f"@{username} not found in account pool"})
+
+    return jsonify({"ok": False, "error": "Invalid target"})
+
+
 @app.route("/api/engage", methods=["POST"])
 def api_engage():
     data = request.json or {}
