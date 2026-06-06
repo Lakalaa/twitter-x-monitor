@@ -642,8 +642,8 @@ async def handle_telegram_commands():
                                         asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                         return
                                     add_log(f"Scraping followers of @{u} via GraphQL…")
-                                    asyncio.run(tb.send_message(f"🔍 Scraping followers of @{u} via GraphQL… (fetching up to 5,000)"))
-                                    result = _sfg(u, auth_token, ct0, limit=5000)
+                                    asyncio.run(tb.send_message(f"🔍 Scraping followers of @{u} via GraphQL… (fetching all)"))
+                                    result = _sfg(u, auth_token, ct0)
                                     if not result.get("ok"):
                                         asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
                                         return
@@ -755,8 +755,8 @@ async def handle_telegram_commands():
                                         asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                         return
                                     add_log(f"Scraping following of @{u} via GraphQL…")
-                                    asyncio.run(tb.send_message(f"🔍 Scraping following of @{u} via GraphQL… (fetching up to 5,000)"))
-                                    result = _sfoG(u, auth_token, ct0, limit=5000)
+                                    asyncio.run(tb.send_message(f"🔍 Scraping following of @{u} via GraphQL… (fetching all)"))
+                                    result = _sfoG(u, auth_token, ct0)
                                     if not result.get("ok"):
                                         asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
                                         return
@@ -1378,7 +1378,7 @@ async def handle_telegram_commands():
                                 if not auth_token or not ct0:
                                     asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                     return
-                                result = _srg(src_id, auth_token, ct0, limit=500, no_admins=skip)
+                                result = _srg(src_id, auth_token, ct0, no_admins=skip)
                                 if not result.get("ok"):
                                     asyncio.run(tb.send_message(f"❌ GraphQL error: {result.get('error','Unknown')}"))
                                     return
@@ -2281,7 +2281,7 @@ def api_scrape():
                 job.update({"status": "error", "message": "❌ No Twitter auth_token/ct0 set — add them in Settings"}); return
 
             job.update({"message": "🔍 Scraping replies via GraphQL…"})
-            result = _srg(src_id, auth_token, ct0, limit=500, no_admins=skip)
+            result = _srg(src_id, auth_token, ct0, no_admins=skip)
             if not result.get("ok"):
                 job.update({"status": "error", "message": f"❌ {result.get('error','Unknown error')}"}); return
 
