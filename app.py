@@ -2383,11 +2383,12 @@ def api_proxies_test_all():
 @app.route("/api/engage", methods=["POST"])
 def api_engage():
     data = request.json or {}
-    tweet_url    = data.get("tweet_url", "").strip()
-    action       = data.get("action", "like").strip()
-    comment_text = data.get("comment_text", "").strip()
-    mention      = data.get("mention", "").strip()
-    count        = data.get("count")
+    tweet_url     = data.get("tweet_url", "").strip()
+    action        = data.get("action", "like").strip()
+    comment_text  = data.get("comment_text", "").strip()
+    comment_texts = data.get("comment_texts", [])   # rotating list
+    mention       = data.get("mention", "").strip()
+    count         = data.get("count")
     try: count = int(count) if count else None
     except (ValueError, TypeError): count = None
 
@@ -2395,8 +2396,8 @@ def api_engage():
         return jsonify({"ok": False, "error": "tweet_url is required"}), 400
     if action not in ("like", "comment", "both", "retweet"):
         return jsonify({"ok": False, "error": "action must be like, comment, both, or retweet"}), 400
-    if action in ("comment", "both") and not comment_text and not mention:
-        return jsonify({"ok": False, "error": "comment_text or mention is required for comment/both"}), 400
+    if action in ("comment", "both") and not comment_text and not comment_texts and not mention:
+        return jsonify({"ok": False, "error": "comment_text, comment_texts, or mention is required for comment/both"}), 400
 
     import uuid
     job_id = uuid.uuid4().hex[:8]
@@ -2407,7 +2408,8 @@ def api_engage():
         "finished_at": None,
     }
 
-    def _run(jid=job_id, url=tweet_url, act=action, text=comment_text, tag=mention, n=count):
+    def _run(jid=job_id, url=tweet_url, act=action, text=comment_text,
+             texts=comment_texts, tag=mention, n=count):
         import sys as _sys; _sys.path.insert(0, "tools")
         from twitter_post import bulk_engage, load_account_pool
         job = STATE["engage_jobs"][jid]
@@ -2422,8 +2424,9 @@ def api_engage():
             job["fail"] = done - job["ok"]
 
         job["results"] = []
-        result = bulk_engage(url, action=act, comment_text=text, mention=tag,
-                             accounts=pool, delay_min=3.0, delay_max=8.0, progress_cb=progress)
+        result = bulk_engage(url, action=act, comment_text=text, comment_texts=texts,
+                             mention=tag, accounts=pool, delay_min=3.0, delay_max=8.0,
+                             progress_cb=progress)
         job.update({
             "status": "done",
             "ok": result.get("ok", 0),
