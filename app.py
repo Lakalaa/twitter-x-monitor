@@ -2693,8 +2693,25 @@ def health():
 # ─── Startup — works with both `python app.py` and gunicorn ──────────────────
 
 def _start_background_services():
-    tg_thread = threading.Thread(target=start_telegram_listener, daemon=True)
-    tg_thread.start()
+    # Only one instance should poll Telegram at a time.
+    # On Render (RENDER env var auto-set): always poll — Render is the production bot.
+    # On Replit (no RENDER env var): ping Render's health endpoint first;
+    #   if Render is live, skip polling here to avoid 409 Conflict.
+    _run_bot = True
+    is_on_render = bool(os.environ.get("RENDER"))
+    if not is_on_render:
+        try:
+            import urllib.request as _ur
+            _ur.urlopen("https://twitter-x-monitor.onrender.com/health", timeout=5)
+            _run_bot = False
+            add_log("Telegram polling skipped — Render is live (avoids 409 Conflict)")
+        except Exception:
+            pass  # Render not reachable → Replit handles the bot
+
+    if _run_bot:
+        tg_thread = threading.Thread(target=start_telegram_listener, daemon=True)
+        tg_thread.start()
+
     sched_thread = threading.Thread(target=start_scheduler, daemon=True)
     sched_thread.start()
     add_log("App started")
