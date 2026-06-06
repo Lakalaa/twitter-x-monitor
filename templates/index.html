@@ -180,11 +180,15 @@
           <span class="pill pill-green"  id="proxy-assigned-pill"   style="display:none">— assigned</span>
           <span class="pill pill-yellow" id="proxy-unassigned-pill" style="display:none">— without proxy</span>
           <span class="pill pill-gray"   id="proxy-none-pill">No proxies configured</span>
+          <span class="pill pill-green"  id="proxy-alive-pill"      style="display:none">— alive</span>
+          <span class="pill"             id="proxy-dead-pill"       style="display:none;background:#3b1212;color:#f87171">— dead</span>
+          <span class="pill"             id="proxy-untested-pill"   style="display:none;background:#1a1a2e;color:#6b7280">— untested</span>
           <span class="pill"             id="proxy-countries-pill"  style="display:none;background:#1e3a5f;color:#93c5fd">— countries</span>
           <span class="pill"             id="proxy-africa-pill"     style="display:none;background:#3b1f1f;color:#f87171">🚫 — African (excluded)</span>
           <span class="pill"             id="proxy-ungeo-pill"      style="display:none;background:#2a2a1a;color:#fbbf24">⚠ — unlocated</span>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost" onclick="testAllProxies()"  id="proxy-test-btn"   style="display:none;font-size:12px">🔍 Test all proxies</button>
           <button class="btn btn-ghost" onclick="geolocateProxies()" id="proxy-geo-btn" style="display:none;font-size:12px">🌍 Re-geolocate</button>
           <button class="btn btn-ghost" onclick="assignProxies()"    id="proxy-assign-btn" style="display:none">⚡ Assign to accounts</button>
           <button class="btn btn-ghost" onclick="clearProxies()"     id="proxy-clear-btn"  style="display:none;font-size:12px;color:#ef4444;border-color:#ef4444">✕ Clear</button>
@@ -1216,33 +1220,60 @@ async function refreshProxies() {
 
   document.getElementById('proxy-count').textContent = d.total || 0;
 
-  const nonePill    = document.getElementById('proxy-none-pill');
-  const asgnPill    = document.getElementById('proxy-assigned-pill');
-  const unasgnPill  = document.getElementById('proxy-unassigned-pill');
-  const countryPill = document.getElementById('proxy-countries-pill');
-  const africaPill  = document.getElementById('proxy-africa-pill');
-  const ungeoPill   = document.getElementById('proxy-ungeo-pill');
-  const assignBtn   = document.getElementById('proxy-assign-btn');
-  const clearBtn    = document.getElementById('proxy-clear-btn');
-  const geoBtn      = document.getElementById('proxy-geo-btn');
-  const breakdown   = document.getElementById('proxy-country-breakdown');
-  const grid        = document.getElementById('proxy-country-grid');
+  const nonePill     = document.getElementById('proxy-none-pill');
+  const asgnPill     = document.getElementById('proxy-assigned-pill');
+  const unasgnPill   = document.getElementById('proxy-unassigned-pill');
+  const alivePill    = document.getElementById('proxy-alive-pill');
+  const deadPill     = document.getElementById('proxy-dead-pill');
+  const untestedPill = document.getElementById('proxy-untested-pill');
+  const countryPill  = document.getElementById('proxy-countries-pill');
+  const africaPill   = document.getElementById('proxy-africa-pill');
+  const ungeoPill    = document.getElementById('proxy-ungeo-pill');
+  const assignBtn    = document.getElementById('proxy-assign-btn');
+  const clearBtn     = document.getElementById('proxy-clear-btn');
+  const geoBtn       = document.getElementById('proxy-geo-btn');
+  const testBtn      = document.getElementById('proxy-test-btn');
+  const breakdown    = document.getElementById('proxy-country-breakdown');
+  const grid         = document.getElementById('proxy-country-grid');
+
+  // Test job progress banner
+  const job = d.test_job || {};
+  if (job.running) {
+    const pct = job.total > 0 ? Math.round(job.done / job.total * 100) : 0;
+    document.getElementById('proxy-status').style.color = '#fbbf24';
+    document.getElementById('proxy-status').textContent =
+      `⏳ Testing proxies… ${job.done}/${job.total} (${pct}%) — ${job.alive} alive, ${job.dead} dead`;
+    if (testBtn) { testBtn.disabled = true; testBtn.textContent = `⏳ Testing… ${pct}%`; }
+  } else if (job.finished_at) {
+    if (testBtn) { testBtn.disabled = false; testBtn.textContent = '🔍 Test all proxies'; }
+  }
 
   if (d.total === 0) {
     nonePill.style.display = '';
-    [asgnPill, unasgnPill, countryPill, africaPill, ungeoPill, assignBtn, clearBtn, geoBtn].forEach(el => el.style.display = 'none');
+    [asgnPill, unasgnPill, alivePill, deadPill, untestedPill,
+     countryPill, africaPill, ungeoPill, assignBtn, clearBtn, geoBtn, testBtn]
+      .forEach(el => { if (el) el.style.display = 'none'; });
     breakdown.style.display = 'none';
   } else {
     nonePill.style.display = 'none';
     assignBtn.style.display = '';
     clearBtn.style.display = '';
     geoBtn.style.display = '';
+    testBtn.style.display = '';
 
     const unassigned = d.accounts_total - d.accounts_assigned;
     asgnPill.style.display = d.accounts_assigned > 0 ? '' : 'none';
     asgnPill.textContent = d.accounts_assigned + ' assigned';
     unasgnPill.style.display = unassigned > 0 ? '' : 'none';
     unasgnPill.textContent = unassigned + ' without proxy';
+
+    // Alive / dead / untested pills
+    alivePill.style.display    = d.alive > 0    ? '' : 'none';
+    alivePill.textContent      = '✅ ' + d.alive + ' alive';
+    deadPill.style.display     = d.dead > 0     ? '' : 'none';
+    deadPill.textContent       = '💀 ' + d.dead + ' dead';
+    untestedPill.style.display = d.untested > 0 ? '' : 'none';
+    untestedPill.textContent   = d.untested + ' untested';
 
     const countries = Object.keys(d.country_breakdown || {}).length;
     countryPill.style.display = countries > 0 ? '' : 'none';
@@ -1352,7 +1383,44 @@ async function clearProxies() {
   }
 }
 
-setInterval(refreshProxies, 30000);
+async function testAllProxies() {
+  const btn    = document.getElementById('proxy-test-btn');
+  const status = document.getElementById('proxy-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Starting…';
+  status.style.color = '#fbbf24';
+  status.textContent = 'Starting proxy health check…';
+  const r = await fetch('/api/proxies/test-all', {method:'POST'}).then(r => r.json()).catch(() => null);
+  if (r && r.ok) {
+    status.textContent = `⏳ ${r.message}`;
+    // Poll every 3s while test runs
+    const poll = setInterval(async () => {
+      const d = await fetch('/api/proxies').then(r => r.json()).catch(() => null);
+      if (!d) return;
+      const job = d.test_job || {};
+      if (!job.running) {
+        clearInterval(poll);
+        status.style.color = '#86efac';
+        status.textContent = `✅ Test done — ${job.alive} alive / ${job.dead} dead out of ${job.total}`;
+        btn.disabled = false;
+        btn.textContent = '🔍 Test all proxies';
+        refreshProxies();
+      } else {
+        const pct = job.total > 0 ? Math.round(job.done / job.total * 100) : 0;
+        status.textContent = `⏳ Testing… ${job.done}/${job.total} (${pct}%) — ✅ ${job.alive} alive · 💀 ${job.dead} dead`;
+        btn.textContent = `⏳ ${pct}%`;
+      }
+    }, 3000);
+  } else {
+    status.style.color = '#f87171';
+    status.textContent = '❌ ' + (r && r.error ? r.error : 'Failed to start test');
+    btn.disabled = false;
+    btn.textContent = '🔍 Test all proxies';
+  }
+}
+
+// Faster refresh while a test is running
+let _proxyRefreshInterval = setInterval(refreshProxies, 30000);
 refreshProxies();
 
 // ── Saved users (scraped_users.json) shared loader ────────────────────────────
