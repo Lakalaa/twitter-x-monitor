@@ -503,6 +503,66 @@
         <strong style="color:#fff">Step 2</strong> tags them 5 at a time under any post you choose.
       </p>
 
+      <!-- Scrape by Comment Keywords -->
+      <div style="background:#0a0c12;border:1px solid #0e7490;border-radius:10px;padding:16px;margin-bottom:14px">
+        <div style="font-size:13px;font-weight:600;color:#22d3ee;margin-bottom:4px">💬 Scrape by Comment Keywords</div>
+        <div style="font-size:12px;color:#6b7280;margin-bottom:12px">Scan every reply on a tweet and collect users whose comment matches your keywords — e.g. "received", "thank you", "partnership". Real members only.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Tweet URL</label>
+            <input id="kw-tweet-url" type="text" placeholder="https://x.com/user/status/123456789"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+          <div style="flex:0 0 110px">
+            <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Target count</label>
+            <input id="kw-limit" type="number" min="1" max="99999" value="5643"
+              style="width:100%;background:#1a1d27;border:1px solid #374151;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="margin-bottom:10px">
+          <label style="font-size:12px;color:#9ca3af;display:block;margin-bottom:6px">Keywords <span style="color:#6b7280">(one per line — match ANY)</span></label>
+          <textarea id="kw-keywords" rows="5" style="width:100%;box-sizing:border-box;background:#1a1d27;border:1px solid #374151;border-radius:8px;color:#e0e0e0;font-family:monospace;font-size:12px;padding:10px;resize:vertical;outline:none">received my sol
+received in my wallet
+got my sol
+thank you
+thanks
+partnership
+great project
+sol received
+congrats
+amazing
+crypto reward
+reward received</textarea>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#d1d5db">
+            <input type="checkbox" id="kw-skip-verified" checked style="accent-color:#0e7490;width:14px;height:14px"> Skip verified / blue-tick
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#d1d5db">
+            <input type="checkbox" id="kw-skip-bots" checked style="accent-color:#0e7490;width:14px;height:14px"> Skip bots &amp; new accounts
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#d1d5db">
+            <input type="checkbox" id="kw-append" style="accent-color:#0e7490;width:14px;height:14px"> Append to existing list
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button onclick="scrapeByKeywords()" id="kw-btn"
+            style="background:#0e7490;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer">
+            💬 Scrape Matching Comments
+          </button>
+          <span id="kw-status" style="font-size:13px;color:#6b7280"></span>
+        </div>
+        <div id="kw-progress" style="display:none;margin-top:12px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#9ca3af;margin-bottom:4px">
+            <span id="kw-progress-label">Scanning…</span>
+            <span id="kw-progress-counts">0 matched / 0 scanned</span>
+          </div>
+          <div style="background:#1f2937;border-radius:6px;height:8px;overflow:hidden">
+            <div id="kw-progress-bar" style="height:100%;background:#0e7490;width:0%;transition:width 0.4s"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Scrape Followers by Account -->
       <div style="background:#0a0c12;border:1px solid #7c3aed;border-radius:10px;padding:16px;margin-bottom:14px">
         <div style="font-size:13px;font-weight:600;color:#a78bfa;margin-bottom:4px">👥 Scrape Followers by Account</div>
@@ -1542,6 +1602,66 @@ async function clearSavedUsers() {
   if (!confirm('Clear all saved users? This cannot be undone.')) return;
   await fetch('/api/scrape/clear', { method: 'POST' });
   loadSavedUsers();
+}
+
+async function scrapeByKeywords() {
+  const url    = document.getElementById('kw-tweet-url').value.trim();
+  const limit  = parseInt(document.getElementById('kw-limit').value) || 5643;
+  const sv     = document.getElementById('kw-skip-verified').checked;
+  const sb     = document.getElementById('kw-skip-bots').checked;
+  const append = document.getElementById('kw-append').checked;
+  const kw     = document.getElementById('kw-keywords').value
+                   .split('\n').map(s => s.trim()).filter(Boolean);
+  const btn    = document.getElementById('kw-btn');
+  const status = document.getElementById('kw-status');
+  const prog   = document.getElementById('kw-progress');
+  const bar    = document.getElementById('kw-progress-bar');
+  const lbl    = document.getElementById('kw-progress-label');
+  const cnt    = document.getElementById('kw-progress-counts');
+
+  if (!url) { status.style.color='#f87171'; status.textContent='Paste a tweet URL first'; return; }
+
+  btn.disabled = true; btn.textContent = '⏳ Starting…';
+  status.style.color = '#fbbf24';
+  status.textContent = `Starting keyword scrape…`;
+  prog.style.display = '';
+  bar.style.width = '0%'; bar.style.background = '#0e7490';
+  lbl.textContent = 'Connecting…'; cnt.textContent = '0 matched / 0 scanned';
+
+  const r = await fetch('/api/scrape/keywords', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ tweet_url: url, keywords: kw, limit, skip_verified: sv, skip_bots: sb, append }),
+  }).then(r => r.json()).catch(() => null);
+
+  if (!r || !r.ok) {
+    status.style.color = '#f87171';
+    status.textContent = '❌ ' + (r && r.error ? r.error : 'Failed to start');
+    btn.disabled = false; btn.textContent = '💬 Scrape Matching Comments'; return;
+  }
+
+  status.textContent = `⏳ Scanning replies… job ${r.job_id}`;
+  const poll = setInterval(async () => {
+    const j = await fetch(`/api/scrape/keywords/${r.job_id}`).then(r => r.json()).catch(() => null);
+    if (!j) return;
+    const pct = j.target > 0 ? Math.min(100, Math.round(j.collected / j.target * 100)) : 0;
+    bar.style.width = pct + '%';
+    lbl.textContent = j.message || 'Scanning…';
+    cnt.textContent = `${j.collected} matched / ${j.scanned || 0} scanned`;
+    if (j.status === 'done' || j.status === 'error') {
+      clearInterval(poll);
+      btn.disabled = false; btn.textContent = '💬 Scrape Matching Comments';
+      if (j.status === 'done') {
+        status.style.color = '#86efac';
+        status.textContent = `✅ ${j.collected} matching commenters saved`;
+        bar.style.width = '100%'; bar.style.background = '#22c55e';
+        loadSavedUsers();
+      } else {
+        status.style.color = '#f87171';
+        status.textContent = j.message || '❌ Scrape failed';
+      }
+    }
+  }, 3000);
 }
 
 async function scrapeFollowers() {
