@@ -2780,6 +2780,7 @@ def api_scrape_keywords():
     data          = request.json or {}
     tweet_url     = data.get("tweet_url", "").strip()
     keywords      = data.get("keywords", [])
+    min_length    = data.get("min_length", 0)
     limit         = data.get("limit", 5643)
     skip_verified = bool(data.get("skip_verified", True))
     skip_bots     = bool(data.get("skip_bots", True))
@@ -2804,7 +2805,7 @@ def api_scrape_keywords():
         "finished_at": None, "message": "Connecting…",
     }
 
-    def _run(jid=job_id, tid=tweet_id, url=tweet_url, kw=keywords,
+    def _run(jid=job_id, tid=tweet_id, url=tweet_url, kw=keywords, ml=min_length,
              lim=limit, sv=skip_verified, sb=skip_bots, app_mode=append_mode):
         import sys as _sys
         _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
@@ -2816,8 +2817,13 @@ def api_scrape_keywords():
             job.update({"status": "error",
                         "message": "❌ No Twitter auth_token/ct0 — add in Settings"}); return
 
-        kw_label = ", ".join(f'"{k}"' for k in kw[:5]) if kw else "all comments"
-        job["message"] = f"Scanning replies for: {kw_label}…"
+        parts = []
+        if kw:
+            parts.append(", ".join(f'"{k}"' for k in kw[:4]))
+        if ml:
+            parts.append(f"long messages (≥{ml} chars)")
+        job["message"] = f"Scanning replies — filters: {'; '.join(parts) or 'all'}…"
+        job["preview"] = []
 
         def _progress(collected, scanned):
             job["collected"] = collected
@@ -2826,7 +2832,7 @@ def api_scrape_keywords():
 
         result = _srk(tid, auth_token, ct0,
                       limit=lim, no_admins=sv, skip_bots=sb,
-                      keywords=kw, progress_cb=_progress)
+                      keywords=kw, min_length=int(ml or 0), progress_cb=_progress)
 
         users = result.get("users", [])
         job["collected"] = len(users)
@@ -2858,10 +2864,22 @@ def api_scrape_keywords():
         with open(save_path, "w") as f:
             json.dump({"source": src, "users": plain, "_rich": merged}, f, indent=2)
 
+        # Store up to 50 matched comments for UI preview (newest matched first)
+        preview_items = []
+        for u in users[:50]:
+            if isinstance(u, dict):
+                preview_items.append({
+                    "screen_name": u.get("screen_name", ""),
+                    "name": u.get("name", ""),
+                    "text": u.get("text", ""),
+                    "verified": u.get("verified", False),
+                })
+
         job.update({
             "status": "done", "collected": len(users), "total_saved": len(plain),
             "finished_at": datetime.now().isoformat(),
             "message": f"✅ {len(users)} matching commenters saved (total: {len(plain)})",
+            "preview": preview_items,
         })
         add_log(f"Keyword scrape: {len(users)} matched from {url}")
 
