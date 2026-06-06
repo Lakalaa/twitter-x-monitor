@@ -415,16 +415,19 @@ def load_account_pool(cookies_file: str = "tools/cookies.json") -> list:
 
 def bulk_engage(
     tweet_url: str,
-    action: str,            # "like", "comment", "both", or "retweet"
+    action: str,                  # "like", "comment", "both", or "retweet"
     comment_text: str = "",
-    mention: str = "",      # @username to prepend to every comment
-    accounts: list = None,  # subset of pool; if None, uses full pool
+    comment_texts: list = None,   # rotating list — one per account (random pick each time)
+    mention: str = "",            # @username to prepend to every comment
+    accounts: list = None,        # subset of pool; if None, uses full pool
     delay_min: float = 3.0,
     delay_max: float = 8.0,
-    progress_cb=None,       # callback(done, total, username, result_str)
+    progress_cb=None,             # callback(done, total, username, result_str)
 ) -> dict:
     """
-    Run like/comment/both on a tweet using the full account pool.
+    Run like/comment/both/retweet on a tweet using the full account pool.
+    If comment_texts is a non-empty list, each account picks one at random
+    (so every post looks different — avoids spam detection).
 
     Returns:
         {
@@ -443,6 +446,17 @@ def bulk_engage(
     pool = accounts if accounts is not None else load_account_pool()
     if not pool:
         return {"ok": 0, "fail": 0, "error": "Account pool is empty. Check tools/cookies.json."}
+
+    # Normalise rotating list — filter blanks, shuffle once for variety
+    _texts = [t.strip() for t in (comment_texts or []) if str(t).strip()]
+    if _texts:
+        random.shuffle(_texts)
+
+    def _pick_text(index: int) -> str:
+        """Return the comment for this account: rotating list > single text > ""."""
+        if _texts:
+            return _texts[index % len(_texts)]
+        return comment_text
 
     # Build comment text: optional @mention prefix
     def build_comment(base_text: str) -> str:
@@ -502,7 +516,7 @@ def bulk_engage(
             entry_results.append(("retweet", res))
 
         if action in ("comment", "both"):
-            text = build_comment(comment_text)
+            text = build_comment(_pick_text(i))
             if text:
                 res = post_reply(text, tweet_id, auth_tok, ct0_val, proxy=proxy)
             else:
