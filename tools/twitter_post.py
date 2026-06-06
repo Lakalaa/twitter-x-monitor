@@ -811,23 +811,36 @@ def scrape_replies_with_keywords(
     skip_bots: bool = False,
     keywords: list = None,      # OR logic — keep reply if ANY keyword found in text
     min_length: int = 0,        # also keep replies whose text is >= this many chars (long/deep msgs)
+    max_age_minutes: int = 0,   # also keep replies posted within this many minutes (0 = off)
     progress_cb=None,           # callback(collected, scanned) — called after every page
 ) -> dict:
     """
-    Scrape replies to a tweet, capture the reply TEXT, and filter by keywords or length.
-    A reply is kept when it matches ANY keyword  OR  its text length >= min_length.
-    If both keywords and min_length are absent/0, every reply is kept.
+    Scrape replies to a tweet, capture the reply TEXT, and filter by keywords / length / recency.
+    A reply is kept when it matches ANY keyword  OR  text >= min_length  OR  posted within max_age_minutes.
+    If all three filters are absent/0, every reply is kept.
     Returns {"ok": True, "users": [{"screen_name":…,"name":…,"text":…,"verified":…}], "count": N}
     Paginates up to 600 pages (~12 000+ replies) to hit large targets like 5 643.
     """
     import urllib.parse as _up
 
-    kw_lower = [k.lower() for k in (keywords or [])]
+    import datetime as _dt
+    kw_lower   = [k.lower() for k in (keywords or [])]
     use_length = int(min_length or 0)
+    use_age    = int(max_age_minutes or 0)
 
-    def _matches(text: str) -> bool:
+    def _parse_tw_date(s: str):
+        """Parse Twitter's 'Mon Jan 01 00:00:00 +0000 2024' format → UTC datetime."""
+        try:
+            return _dt.datetime.strptime(s, "%a %b %d %H:%M:%S +0000 %Y").replace(
+                tzinfo=_dt.timezone.utc)
+        except Exception:
+            return None
+
+    _now_utc = _dt.datetime.now(_dt.timezone.utc)
+
+    def _matches(text: str, created_at: str = "") -> bool:
         # Accept all if no filters set
-        if not kw_lower and use_length == 0:
+        if not kw_lower and use_length == 0 and use_age == 0:
             return True
         # Keyword hit
         t = text.lower()
@@ -836,6 +849,11 @@ def scrape_replies_with_keywords(
         # Long/deep message hit
         if use_length > 0 and len(text.strip()) >= use_length:
             return True
+        # Recency hit — posted within max_age_minutes
+        if use_age > 0 and created_at:
+            ts = _parse_tw_date(created_at)
+            if ts and (_now_utc - ts).total_seconds() <= use_age * 60:
+                return True
         return False
 
     hdrs = _headers(auth_token, ct0)
@@ -897,13 +915,13 @@ def scrape_replies_with_keywords(
             )
 
             def _extract_tr(tr):
-                """Extract (user_legacy, tweet_full_text) from a tweet_result object."""
+                """Extract (user_legacy, tweet_full_text, created_at_str) from a tweet_result."""
                 legacy_u = (tr.get("core", {})
                               .get("user_results", {})
                               .get("result", {})
                               .get("legacy", {}))
                 legacy_t = tr.get("legacy", {})
-                return legacy_u, legacy_t.get("full_text", "")
+                return legacy_u, legacy_t.get("full_text", ""), legacy_t.get("created_at", "")
 
             next_cursor = None
             found_this_page = 0
@@ -929,7 +947,7 @@ def scrape_replies_with_keywords(
                             candidates.append(tr)
 
                     for tr in candidates:
-                        legacy_u, text = _extract_tr(tr)
+                        legacy_u, text, created_at = _extract_tr(tr)
                         sn = legacy_u.get("screen_name", "").strip()
                         if not sn or sn.lower() in seen:
                             continue
@@ -939,7 +957,7 @@ def scrape_replies_with_keywords(
                             continue
                         if skip_bots and _is_likely_bot(legacy_u):
                             continue
-                        if not _matches(text):
+                        if not _matches(text, created_at):
                             continue
                         seen.add(sn.lower())
                         users.append({
@@ -947,6 +965,7 @@ def scrape_replies_with_keywords(
                             "name": legacy_u.get("name", sn),
                             "text": text[:280],
                             "verified": bool(is_verified),
+                            "created_at": created_at,
                         })
                         found_this_page += 1
 
