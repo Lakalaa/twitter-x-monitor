@@ -167,6 +167,35 @@
       </div>
     </div>
 
+    <div class="card" id="proxy-card">
+      <h2>Proxy Manager <span style="font-size:12px;font-weight:400;color:#6b7280">(one proxy per account)</span></h2>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div>
+          <div style="font-size:32px;font-weight:800;color:#fff;line-height:1" id="proxy-count">—</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:2px">proxies loaded</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <span class="pill pill-green" id="proxy-assigned-pill" style="display:none">— assigned</span>
+          <span class="pill pill-yellow" id="proxy-unassigned-pill" style="display:none">— without proxy</span>
+          <span class="pill pill-gray" id="proxy-none-pill">No proxies configured</span>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost" onclick="assignProxies()" id="proxy-assign-btn" style="display:none">⚡ Assign to accounts</button>
+          <button class="btn btn-ghost" onclick="clearProxies()" style="font-size:12px;color:#ef4444;border-color:#ef4444" id="proxy-clear-btn" style="display:none">✕ Clear all</button>
+        </div>
+      </div>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:8px">
+        Paste proxies below — one per line. Formats accepted:<br>
+        <code style="background:#1a1d2e;padding:2px 6px;border-radius:4px;font-size:11px">http://user:pass@host:port</code> &nbsp;
+        <code style="background:#1a1d2e;padding:2px 6px;border-radius:4px;font-size:11px">socks5://user:pass@host:port</code>
+      </p>
+      <textarea id="proxy-textarea" placeholder="http://user:pass@1.2.3.4:8080&#10;socks5://user:pass@5.6.7.8:1080&#10;..." style="width:100%;box-sizing:border-box;background:#0a0c12;border:1px solid #2a2d3e;border-radius:8px;color:#e0e0e0;font-family:monospace;font-size:12px;padding:10px;min-height:110px;resize:vertical;outline:none" oninput="onProxyTextChange()"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+        <button class="btn" onclick="saveProxies()" id="proxy-save-btn" disabled>💾 Save proxies</button>
+        <span id="proxy-status" style="font-size:13px;color:#6b7280"></span>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Scraped Data Cache</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:12px">
@@ -1160,6 +1189,98 @@ async function refreshPool() {
 }
 setInterval(refreshPool, 15000);
 refreshPool();
+
+// ── Proxy manager ─────────────────────────────────────────────────────────────
+async function refreshProxies() {
+  const d = await fetch('/api/proxies').then(r => r.json()).catch(() => null);
+  if (!d) return;
+  document.getElementById('proxy-count').textContent = d.total || 0;
+  const nonePill   = document.getElementById('proxy-none-pill');
+  const asgnPill   = document.getElementById('proxy-assigned-pill');
+  const unasgnPill = document.getElementById('proxy-unassigned-pill');
+  const assignBtn  = document.getElementById('proxy-assign-btn');
+  const clearBtn   = document.getElementById('proxy-clear-btn');
+  if (d.total === 0) {
+    nonePill.style.display = '';
+    asgnPill.style.display = 'none';
+    unasgnPill.style.display = 'none';
+    assignBtn.style.display = 'none';
+    clearBtn.style.display = 'none';
+  } else {
+    nonePill.style.display = 'none';
+    assignBtn.style.display = '';
+    clearBtn.style.display = '';
+    const unassigned = d.accounts_total - d.accounts_assigned;
+    asgnPill.style.display = d.accounts_assigned > 0 ? '' : 'none';
+    asgnPill.textContent = d.accounts_assigned + ' assigned';
+    unasgnPill.style.display = unassigned > 0 ? '' : 'none';
+    unasgnPill.textContent = unassigned + ' without proxy';
+  }
+  const ta = document.getElementById('proxy-textarea');
+  if (d.proxies && d.proxies.length > 0 && !ta.dataset.dirty) {
+    ta.value = d.proxies.join('\n');
+  }
+}
+
+function onProxyTextChange() {
+  document.getElementById('proxy-textarea').dataset.dirty = '1';
+  document.getElementById('proxy-save-btn').disabled = false;
+}
+
+async function saveProxies() {
+  const lines = document.getElementById('proxy-textarea').value
+    .split('\n').map(l => l.trim()).filter(l => l.startsWith('http') || l.startsWith('socks5'));
+  const btn = document.getElementById('proxy-save-btn');
+  const status = document.getElementById('proxy-status');
+  btn.disabled = true;
+  status.textContent = 'Saving…';
+  const r = await fetch('/api/proxies', {method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({proxies: lines})}).then(r => r.json()).catch(() => null);
+  if (r && r.ok) {
+    status.style.color = '#86efac';
+    status.textContent = `✅ ${r.saved} proxies saved`;
+    document.getElementById('proxy-textarea').dataset.dirty = '';
+    refreshProxies();
+  } else {
+    status.style.color = '#f87171';
+    status.textContent = '❌ Save failed';
+    btn.disabled = false;
+  }
+}
+
+async function assignProxies() {
+  const status = document.getElementById('proxy-status');
+  status.textContent = 'Assigning…';
+  const r = await fetch('/api/proxies/assign', {method:'POST'}).then(r => r.json()).catch(() => null);
+  if (r && r.ok) {
+    status.style.color = '#86efac';
+    status.textContent = '✅ ' + r.message;
+    refreshProxies();
+    refreshPool();
+  } else {
+    status.style.color = '#f87171';
+    status.textContent = '❌ ' + (r && r.error ? r.error : 'Assignment failed');
+  }
+}
+
+async function clearProxies() {
+  if (!confirm('Remove proxy assignments from all accounts?')) return;
+  const status = document.getElementById('proxy-status');
+  status.textContent = 'Clearing…';
+  const r = await fetch('/api/proxies/clear', {method:'POST'}).then(r => r.json()).catch(() => null);
+  if (r && r.ok) {
+    status.style.color = '#86efac';
+    status.textContent = '✅ ' + r.message;
+    refreshProxies();
+    refreshPool();
+  } else {
+    status.style.color = '#f87171';
+    status.textContent = '❌ Clear failed';
+  }
+}
+
+setInterval(refreshProxies, 30000);
+refreshProxies();
 
 // ── Saved users (scraped_users.json) shared loader ────────────────────────────
 async function loadSavedUsers() {
