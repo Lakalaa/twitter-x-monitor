@@ -437,6 +437,25 @@
               placeholder="Great partnership! 🔥 SOL to the moon 🚀&#10;Loving this project, keep it up! 💪&#10;Best crypto collab of the year 🎉&#10;This is huge for the ecosystem! 🌐&#10;Received my SOL — thank you! 🙏&#10;Amazing team behind this 👏&#10;Bullish on SOL! 💎&#10;Incredible move, well done! 🚀"></textarea>
           </div>
         </div>
+        <!-- Tag followers option -->
+        <div style="background:#0d1a0d;border:1px solid #166534;border-radius:8px;padding:12px 14px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#4ade80;font-weight:600">
+              <input type="checkbox" id="eng-tag-followers" onchange="toggleTagFollowers()" style="accent-color:#16a34a;width:14px;height:14px">
+              🏷️ Tag followers in each comment
+            </label>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:13px;color:#6b7280">Tag</span>
+              <input id="eng-tag-n" type="number" min="1" max="10" value="4" disabled
+                style="width:52px;background:#1a2e1a;border:1px solid #166534;border-radius:6px;padding:5px 8px;color:#4ade80;font-size:14px;font-weight:600;text-align:center;opacity:0.4">
+              <span style="font-size:13px;color:#6b7280">followers per comment (from saved list)</span>
+            </div>
+          </div>
+          <div id="eng-tag-info" style="font-size:11px;color:#6b7280;margin-top:6px;display:none">
+            ℹ️ Uses the saved users list from the Scrape &amp; Tag panel. Scrape followers first, then enable this. Each account's comment will end with <span style="color:#4ade80;font-family:monospace">@user1 @user2 @user3 @user4</span> — different users per account.
+          </div>
+        </div>
+
         <button onclick="startEngage()" id="eng-btn"
           style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:15px;font-weight:600;cursor:pointer;align-self:flex-start">
           🚀 Start Engagement
@@ -899,6 +918,15 @@ function showTab(name) {
 let engJobId = null;
 let engPollInterval = null;
 
+function toggleTagFollowers() {
+  const on  = document.getElementById('eng-tag-followers').checked;
+  const inp = document.getElementById('eng-tag-n');
+  const inf = document.getElementById('eng-tag-info');
+  inp.disabled   = !on;
+  inp.style.opacity = on ? '1' : '0.4';
+  inf.style.display = on ? '' : 'none';
+}
+
 function setCommentMode(mode) {
   const isSingle = mode === 'single';
   document.getElementById('eng-single-wrap').style.display = isSingle ? '' : 'none';
@@ -962,8 +990,11 @@ async function startEngage() {
   btn.disabled = true;
   btn.textContent = '⏳ Starting…';
 
+  const tagOn = document.getElementById('eng-tag-followers').checked;
+  const tagN  = tagOn ? (parseInt(document.getElementById('eng-tag-n').value) || 4) : 0;
+
   const body = { tweet_url: url, action, comment_text: comment,
-                 comment_texts: commentTexts, mention };
+                 comment_texts: commentTexts, mention, tag_followers_count: tagN };
   if (count) body.count = parseInt(count);
   const res = await fetch('/api/engage', {
     method: 'POST', headers: {'Content-Type':'application/json'},
