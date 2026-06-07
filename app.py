@@ -649,9 +649,9 @@ async def handle_telegram_commands():
                                     if not raw:
                                         asyncio.run(tb.send_message(f"⚠️ {result.get('message', f'No followers found for @{u}')}"))
                                         return
-                                    # Normalise to the same shape the rest of the code expects
-                                    users = [{"username": r["screen_name"], "displayname": r.get("name", r["screen_name"]),
-                                              "followersCount": r.get("followers_count", 0),
+                                    # Normalise to the same shape _format_user_line_html expects
+                                    users = [{"username": r["screen_name"], "name": r.get("name", r["screen_name"]),
+                                              "followers_count": r.get("followers_count", 0),
                                               "verified": r.get("verified", False)} for r in raw]
                                 add_log(f"Scraped {len(users):,} followers of @{u} — saved to cache")
                                 write_cache("followers", u, users)
@@ -760,8 +760,8 @@ async def handle_telegram_commands():
                                     if not raw:
                                         asyncio.run(tb.send_message(f"⚠️ {result.get('message', f'No following found for @{u}')}"))
                                         return
-                                    users = [{"username": r["screen_name"], "displayname": r.get("name", r["screen_name"]),
-                                              "followersCount": r.get("followers_count", 0),
+                                    users = [{"username": r["screen_name"], "name": r.get("name", r["screen_name"]),
+                                              "followers_count": r.get("followers_count", 0),
                                               "verified": r.get("verified", False)} for r in raw]
                                 add_log(f"Scraped {len(users):,} following of @{u} — saved to cache")
                                 write_cache("following", u, users)
