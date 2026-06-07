@@ -601,7 +601,7 @@ async def handle_telegram_commands():
                             "Each call after: sends the next 500 from the stored list (instant, no re-scraping).\n"
                             "When the list is exhausted it re-scrapes fresh data automatically.\n"
                             "To force a fresh re-scrape now: /rescrape_followers username"
-                        ))
+                        ), disable_web_page_preview=True)
                     else:
                         uname = args.lstrip("@").split()[0]
                         cached = read_cache("followers", uname)
@@ -715,7 +715,7 @@ async def handle_telegram_commands():
                             "Each call after: sends the next 500 from the stored list (instant, no re-scraping).\n"
                             "When the list is exhausted it re-scrapes fresh data automatically.\n"
                             "To force a fresh re-scrape now: /rescrape_following username"
-                        ))
+                        ), disable_web_page_preview=True)
                     else:
                         uname = args.lstrip("@").split()[0]
                         cached = read_cache("following", uname)
@@ -827,7 +827,7 @@ async def handle_telegram_commands():
                             "🤝 Mutuals — follow each other\n"
                             "👁 Followers only — fans (not followed back)\n"
                             "📤 Following only — they don't follow back"
-                        ))
+                        ), disable_web_page_preview=True)
                     else:
                         uname = args.lstrip("@").split()[0]
                         await bot.send_message(
@@ -860,7 +860,7 @@ async def handle_telegram_commands():
                             "name + their comment to the group.\n\n"
                             "Add --no-admins to skip verified/blue-tick accounts:\n"
                             "/replies https://x.com/user/status/123 --no-admins"
-                        ))
+                        ), disable_web_page_preview=True)
                     else:
                         tweet_url, skip_admins = _parse_no_admins(args)
                         filter_note = " (skipping verified accounts)" if skip_admins else ""
@@ -1454,7 +1454,7 @@ async def handle_telegram_commands():
                                     return
                                 users = result.get("users", [])
                                 if not users:
-                                    asyncio.run(tb.send_message("⚠️ No retweeters found (tweet may have 0 retweets or auth is expired)."))
+                                    asyncio.run(tb.send_message("⚠️ No retweeters found (tweet may have 0 retweets or auth is expired."))
                                     return
                                 save_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_users.json")
                                 with open(save_path, "w") as _f:
@@ -1659,7 +1659,7 @@ async def handle_telegram_commands():
                             "Examples:\n"
                             "/like https://x.com/user/status/123\n"
                             "/like https://x.com/user/status/123 50"
-                        ))
+                        ), disable_web_page_preview=True)
                     else:
                         like_args, like_count = _parse_count(args)
                         tweet_url = like_args.split()[0]
@@ -1726,7 +1726,7 @@ async def handle_telegram_commands():
                             "/comment https://x.com/user/status/123 Great post!\n"
                             "/comment https://x.com/user/status/123 50 Great post!\n"
                             "/comment https://x.com/user/status/123 50 @elonmusk check this!"
-                        ))
+                        ), disable_web_page_preview=True)
                     else:
                         tweet_url = parts[0]
                         comment_body = parts[1]
@@ -1767,7 +1767,7 @@ async def handle_telegram_commands():
                             "Examples:\n"
                             "/engage https://x.com/user/status/123 Amazing project!\n"
                             "/engage https://x.com/user/status/123 50 Amazing project!"
-                        ))
+                        ), disable_web_page_preview=True)
                     else:
                         tweet_url = parts[0]
                         comment_body = parts[1]
@@ -1826,7 +1826,13 @@ async def handle_telegram_commands():
 
 
 def start_telegram_listener():
-    asyncio.run(handle_telegram_commands())
+    """Run the Telegram polling loop, auto-restarting on any crash."""
+    while True:
+        try:
+            asyncio.run(handle_telegram_commands())
+        except Exception as _exc:
+            add_log(f"⚠️ Telegram listener crashed ({_exc!r}) — restarting in 10 s")
+            time.sleep(10)
 
 
 # ─── Flask routes ─────────────────────────────────────────────────────────────
@@ -2415,6 +2421,659 @@ h2{{color:#4ade80;margin-top:0}}code{{background:#1f2937;padding:2px 8px;border-
 <a href="/" style="display:inline-block;margin-top:10px;background:#3b82f6;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600">→ Back to Dashboard</a>
 </div></body></html>"""
     return html
+
+
+
+# ─── Proxy-based token refresh ───────────────────────────────────────────────
+REFRESH_STATE = {
+    "running": False,
+    "total": 0,
+    "done": 0,
+    "ok": 0,
+    "fail": 0,
+    "log": [],      # list of {username, status, msg}
+    "error": "",
+}
+
+_REFRESH_BEARER = (
+    "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D"
+    "1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+)
+_REFRESH_SV = {
+    "action_list":2,"alert_dialog":1,"app_download_cta":1,"check_logged_in_account":1,
+    "choice_selection":3,"contacts_live_sync_permission_prompt":0,"cta":7,
+    "email_verification":2,"end_flow":1,"enter_date":1,"enter_email":2,"enter_password":5,
+    "enter_phone":2,"enter_recaptcha":1,"enter_text":5,"enter_username":2,"generic_urt":3,
+    "in_app_notification":1,"interest_picker":3,"js_instrumentation":1,"menu_dialog":1,
+    "notifications_permission_prompt":2,"open_account":2,"open_home_timeline":1,
+    "open_link":1,"phone_verification":4,"privacy_options":1,"security_key":3,
+    "select_avatar":4,"select_banner":2,"settings_list":7,"show_code":1,"sign_up":2,
+    "sign_up_review":4,"tweet_selection_urt":1,"update_users":1,"upload_media":1,
+    "user_recommendations_list":4,"user_recommendations_urt":1,"wait_spinner":3,"web_modal":1,
+}
+
+
+def _proxy_login(username: str, password: str, proxy_url: str):
+    """Login via residential proxy. Returns (cookies_dict, status_str)."""
+    try:
+        from curl_cffi import requests as cr
+        proxies = {"http": proxy_url, "https": proxy_url}
+        s = cr.Session(impersonate="chrome120", proxies=proxies, timeout=20)
+        try:
+            s.get("https://twitter.com/i/js_inst?c_name=ui_metrics", timeout=8)
+        except Exception:
+            pass
+        r = s.post("https://api.x.com/1.1/guest/activate.json",
+                   headers={"Authorization": f"Bearer {_REFRESH_BEARER}"}, timeout=12)
+        if r.status_code != 200:
+            return None, f"guest:{r.status_code}"
+        gt = r.json()["guest_token"]
+        hdrs = {"Authorization": f"Bearer {_REFRESH_BEARER}", "Content-Type": "application/json",
+                "X-Guest-Token": gt, "X-Twitter-Active-User": "yes", "X-Twitter-Client-Language": "en"}
+        r = s.post("https://api.x.com/1.1/onboarding/task.json?flow_name=login", headers=hdrs,
+                   json={"input_flow_data": {"flow_context": {"debug_overrides": {}, "start_location": {"location": "splash_screen"}}},
+                         "subtask_versions": _REFRESH_SV}, timeout=12)
+        if r.status_code != 200:
+            return None, f"init:{r.status_code}"
+        ft = r.json()["flow_token"]
+        st = r.json()["subtasks"][0]["subtask_id"] if r.json().get("subtasks") else ""
+        if "JsInstrumentation" in st:
+            r = s.post("https://api.x.com/1.1/onboarding/task.json", headers=hdrs,
+                       json={"flow_token": ft, "subtask_inputs": [{"subtask_id": st, "js_instrumentation": {"response": "", "link": "next_link"}}]}, timeout=12)
+            if r.status_code != 200:
+                return None, f"jsinstr:{r.status_code}"
+            ft = r.json()["flow_token"]
+            st = r.json()["subtasks"][0]["subtask_id"] if r.json().get("subtasks") else ""
+        if "UserIdentifier" in st:
+            if "SSO" in st:
+                payload = {"flow_token": ft, "subtask_inputs": [{"subtask_id": st, "settings_list": {"setting_responses": [{"key": "user_identifier", "response_data": {"text_data": {"result": username}}}], "link": "next_link"}}]}
+            else:
+                payload = {"flow_token": ft, "subtask_inputs": [{"subtask_id": st, "enter_text": {"text": username, "link": "next_link"}}]}
+            r = s.post("https://api.x.com/1.1/onboarding/task.json", headers=hdrs, json=payload, timeout=12)
+            if r.status_code != 200:
+                try:
+                    errs = r.json().get("errors", [{}])
+                    code = errs[0].get("code", 0) if errs else 0
+                    if code == 399:
+                        return None, "locked:phone_verify"
+                except Exception:
+                    pass
+                return None, f"user:{r.status_code}"
+            ft = r.json()["flow_token"]
+            st = r.json()["subtasks"][0]["subtask_id"] if r.json().get("subtasks") else ""
+        if st == "LoginEnterAlternateIdentifierSubtask":
+            return None, "locked:needs_alt_id"
+        if st == "DenyLoginSubtask":
+            return None, "denied"
+        if st == "LoginAcid":
+            return None, "needs_email_verify"
+        if st == "LoginTwoFactorAuthChallenge":
+            return None, "needs_2fa"
+        if st == "LoginEnterPassword":
+            r = s.post("https://api.x.com/1.1/onboarding/task.json", headers=hdrs,
+                       json={"flow_token": ft, "subtask_inputs": [{"subtask_id": "LoginEnterPassword", "enter_password": {"password": password, "link": "next_link"}}]}, timeout=12)
+            if r.status_code != 200:
+                return None, f"pass:{r.status_code}"
+            data = r.json()
+            ft = data["flow_token"]
+            st = data["subtasks"][0]["subtask_id"] if data.get("subtasks") else ""
+            ck = dict(s.cookies)
+            auth = ck.get("auth_token", "")
+            ct0v = ck.get("ct0", "")
+            if auth:
+                return {"auth_token": auth, "ct0": ct0v}, "ok"
+            if st == "AccountDuplicationCheck":
+                r2 = s.post("https://api.x.com/1.1/onboarding/task.json", headers=hdrs,
+                            json={"flow_token": ft, "subtask_inputs": [{"subtask_id": "AccountDuplicationCheck", "check_logged_in_account": {"link": "AccountDuplicationCheck_false"}}]}, timeout=12)
+                ck = dict(s.cookies)
+                auth = ck.get("auth_token", "")
+                ct0v = ck.get("ct0", "")
+                if auth:
+                    return {"auth_token": auth, "ct0": ct0v}, "ok"
+            if st in ("LoginAcid", "LoginTwoFactorAuthChallenge"):
+                return None, f"needs_2fa:{st}"
+            return None, f"no_cookie next={st}"
+        return None, f"stuck:{st}"
+    except Exception as e:
+        return None, f"error:{str(e)[:80]}"
+
+
+# Countries allowed for proxy rotation — no African countries
+_PROXY_COUNTRIES = [
+    "US","US","US","US","US",   # extra weight on US (many states)
+    "GB","DE","FR","IT","ES","CA","AU","NL","PL","TR",
+    "BR","MX","AR","JP","KR","IN","UA","CZ","SE","NO",
+    "DK","FI","BE","CH","AT","PT","HU","RO","GR",
+    "ID","MY","TH","VN","PH","SG","RU","IL","SA","AE",
+]
+
+
+def _make_session_proxy(base_url: str, session_id: str, country: str = "") -> str:
+    """
+    Build a per-account proxy URL with unique session ID and optional country code.
+    IPRoyal / BrightData / Smartproxy format:
+        http://user_country-US_session-abc123:pass@geo.iproyal.com:12321
+    Webshare rotating residential: skip modification (natural rotation per connection).
+    Only modifies if the proxy has a userinfo part.
+    """
+    if not session_id and not country:
+        return base_url
+    try:
+        from urllib.parse import urlparse, urlunparse
+        p = urlparse(base_url)
+        # Webshare rotating residential uses p.webshare.io — don't touch the URL,
+        # it rotates IPs naturally per connection and rejects modified usernames.
+        if p.hostname and "webshare.io" in p.hostname:
+            return base_url
+        if p.username and p.password:
+            suffix = ""
+            if country:
+                suffix += f"_country-{country}"
+            if session_id:
+                suffix += f"_session-{session_id}"
+            new_netloc = f"{p.username}{suffix}:{p.password}@{p.hostname}:{p.port}"
+            return urlunparse((p.scheme, new_netloc, p.path, p.params, p.query, p.fragment))
+    except Exception:
+        pass
+    return base_url
+
+
+def _run_proxy_refresh(proxy_urls: list, creds_list: list,
+                       session_rotate: bool = False, country_rotate: bool = False):
+    """Background thread: login all accounts, one proxy per account, and save fresh cookies."""
+    import random as _rand
+    import uuid as _uuid
+    REFRESH_STATE.update({"running": True, "total": len(creds_list), "done": 0,
+                          "ok": 0, "fail": 0, "log": [], "error": ""})
+    pool_path = os.path.join(os.path.dirname(__file__), "tools", "cookies.json")
+    try:
+        with open(pool_path) as f:
+            pool = json.load(f)
+    except Exception:
+        pool = []
+    pool_map = {acc.get("username", "").lower(): i for i, acc in enumerate(pool)}
+
+    # Shuffle country list so consecutive accounts don't all get the same country
+    countries = _PROXY_COUNTRIES[:]
+    _rand.shuffle(countries)
+
+    n_proxies = len(proxy_urls)
+    for i, acc in enumerate(creds_list):
+        if not REFRESH_STATE["running"]:
+            break
+        username = acc.get("username", "")
+        password = acc.get("password", "")
+
+        # Pick proxy + country for this account
+        base_proxy = proxy_urls[i % n_proxies]
+        country = countries[i % len(countries)] if country_rotate else ""
+        sid = _uuid.uuid4().hex[:12] if session_rotate else ""
+        proxy = _make_session_proxy(base_proxy, sid, country)
+
+        cookies, status = _proxy_login(username, password, proxy)
+        REFRESH_STATE["done"] += 1
+        entry = {"username": username, "status": "ok" if cookies else "fail",
+                 "msg": status, "proxy_idx": (i % n_proxies) + 1,
+                 "country": country}
+        REFRESH_STATE["log"].insert(0, entry)
+        REFRESH_STATE["log"] = REFRESH_STATE["log"][:200]
+        if cookies:
+            REFRESH_STATE["ok"] += 1
+            key = username.lower()
+            if key in pool_map:
+                pool[pool_map[key]].setdefault("cookies", {})
+                pool[pool_map[key]]["cookies"]["auth_token"] = cookies["auth_token"]
+                pool[pool_map[key]]["cookies"]["ct0"] = cookies["ct0"]
+            else:
+                pool.append({"username": username, "cookies": cookies})
+                pool_map[key] = len(pool) - 1
+            if REFRESH_STATE["ok"] % 10 == 0:
+                with open(pool_path, "w") as f:
+                    json.dump(pool, f, indent=2)
+        else:
+            REFRESH_STATE["fail"] += 1
+        time.sleep(_rand.uniform(0.8, 2.0))
+
+    with open(pool_path, "w") as f:
+        json.dump(pool, f, indent=2)
+    REFRESH_STATE["running"] = False
+    add_log(f"Proxy refresh done: {REFRESH_STATE['ok']} ok / {REFRESH_STATE['fail']} fail")
+
+
+@app.route("/api/test-proxy", methods=["POST"])
+def api_test_proxy():
+    data = request.json or {}
+    proxy_url = (data.get("proxy_url") or "").strip()
+    if not proxy_url:
+        return jsonify({"ok": False, "error": "proxy_url required"})
+    try:
+        from curl_cffi import requests as cr
+        proxies = {"http": proxy_url, "https": proxy_url}
+        s = cr.Session(impersonate="chrome120", proxies=proxies, timeout=10)
+        r = s.get("http://ip-api.com/json", timeout=8)
+        if r.status_code == 200:
+            info = r.json()
+            isp = info.get("isp", "")
+            org = info.get("org", "")
+            country = info.get("country", "")
+            ip = info.get("query", "")
+            residential = not any(kw in (isp + org).lower() for kw in ["hosting","datacenter","cloud","amazon","google","digitalocean","linode","vultr","hetzner","ovh"])
+            return jsonify({"ok": True, "ip": ip, "country": country, "isp": isp,
+                            "residential": residential, "org": org})
+        return jsonify({"ok": False, "error": f"HTTP {r.status_code}"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:120]})
+
+
+@app.route("/api/refresh-with-proxy", methods=["POST"])
+def api_refresh_with_proxy():
+    data = request.json or {}
+    # Accept either proxy_urls (list) or proxy_url (single string)
+    proxy_urls = data.get("proxy_urls") or []
+    if not proxy_urls and data.get("proxy_url"):
+        proxy_urls = [data["proxy_url"].strip()]
+    proxy_urls = [p.strip() for p in proxy_urls if p.strip()]
+    if not proxy_urls:
+        return jsonify({"ok": False, "error": "At least one proxy URL is required"})
+    if REFRESH_STATE["running"]:
+        return jsonify({"ok": False, "error": "Refresh already running"})
+    session_rotate = bool(data.get("session_rotate", False))
+    country_rotate = bool(data.get("country_rotate", False))
+    creds_path = os.path.join(os.path.dirname(__file__), "tools", "accounts_creds.json")
+    if not os.path.exists(creds_path):
+        return jsonify({"ok": False, "error": "tools/accounts_creds.json not found"})
+    with open(creds_path) as f:
+        creds = json.load(f)
+    t = threading.Thread(target=_run_proxy_refresh,
+                         args=(proxy_urls, creds, session_rotate, country_rotate), daemon=True)
+    t.start()
+    flags = []
+    if session_rotate: flags.append("session rotation")
+    if country_rotate: flags.append(f"country rotation ({len(_PROXY_COUNTRIES)} countries, no Africa)")
+    return jsonify({"ok": True, "total": len(creds), "proxies": len(proxy_urls),
+                    "session_rotate": session_rotate, "country_rotate": country_rotate,
+                    "message": f"Started refresh for {len(creds)} accounts — {', '.join(flags) or 'fixed proxies'}"})
+
+
+@app.route("/api/refresh-proxy-status", methods=["GET"])
+def api_refresh_proxy_status():
+    s = REFRESH_STATE
+    pct = int(s["done"] / s["total"] * 100) if s["total"] else 0
+    return jsonify({
+        "running": s["running"],
+        "total": s["total"],
+        "done": s["done"],
+        "ok": s["ok"],
+        "fail": s["fail"],
+        "pct": pct,
+        "log": s["log"][:30],
+        "error": s["error"],
+    })
+
+
+@app.route("/api/refresh-proxy-stop", methods=["POST"])
+def api_refresh_proxy_stop():
+    REFRESH_STATE["running"] = False
+    return jsonify({"ok": True, "message": "Stop signal sent"})
+
+
+# ── Proxy-Comment job state ─────────────────────────────────────────────────
+PC_STATE = {"running": False, "total": 0, "done": 0, "ok": 0, "fail": 0,
+            "log": [], "error": "", "job_id": ""}
+
+
+@app.route("/api/proxy-comment", methods=["POST"])
+def api_proxy_comment():
+    """Login via Webshare proxy + post comment in one shot per account."""
+    if PC_STATE["running"]:
+        return jsonify({"ok": False, "error": "Already running"}), 409
+    data = request.json or {}
+    tweet_url     = (data.get("tweet_url") or "").strip()
+    comment_texts = [t.strip() for t in (data.get("comment_texts") or []) if str(t).strip()]
+    proxy_url     = (data.get("proxy_url") or "").strip()
+    count         = data.get("count")
+    try: count = int(count) if count else None
+    except (ValueError, TypeError): count = None
+    if not tweet_url:
+        return jsonify({"ok": False, "error": "tweet_url required"}), 400
+    if not comment_texts:
+        return jsonify({"ok": False, "error": "comment_texts required"}), 400
+    if not proxy_url:
+        return jsonify({"ok": False, "error": "proxy_url required"}), 400
+
+    import uuid as _uuid2
+    jid = _uuid2.uuid4().hex[:8]
+    PC_STATE.update({"running": True, "total": 0, "done": 0, "ok": 0, "fail": 0,
+                     "log": [], "error": "", "job_id": jid})
+
+    def _run():
+        import sys as _sys, random as _rnd
+        _sys.path.insert(0, "tools")
+        import twitter_post as _tp
+
+        tweet_id = _tp.extract_tweet_id(tweet_url)
+        creds_path = os.path.join(os.path.dirname(__file__), "tools", "accounts_creds.json")
+        pool_path  = os.path.join(os.path.dirname(__file__), "tools", "cookies.json")
+        try:
+            with open(creds_path) as f:
+                creds = json.load(f)
+        except Exception as e:
+            PC_STATE.update({"running": False, "error": f"Cannot load creds: {e}"})
+            return
+        try:
+            with open(pool_path) as f:
+                pool = json.load(f)
+        except Exception:
+            pool = []
+        pool_map = {a.get("username","").lower(): i for i, a in enumerate(pool)}
+
+        if count:
+            creds = creds[:count]
+        PC_STATE["total"] = len(creds)
+
+        _texts = comment_texts[:]
+        _rnd.shuffle(_texts)
+
+        for i, acc in enumerate(creds):
+            if not PC_STATE["running"]:
+                break
+            uname = acc.get("username","")
+            pwd   = acc.get("password","")
+            comment = _texts[i % len(_texts)]
+
+            # Step 1 — login via proxy
+            cookies, status = _proxy_login(uname, pwd, proxy_url)
+            PC_STATE["done"] += 1
+
+            if not cookies:
+                PC_STATE["fail"] += 1
+                entry = {"username": uname, "status": "login_fail", "msg": status, "comment": ""}
+                PC_STATE["log"].insert(0, entry)
+                PC_STATE["log"] = PC_STATE["log"][:300]
+                time.sleep(_rnd.uniform(0.5, 1.5))
+                continue
+
+            auth_token = cookies["auth_token"]
+            ct0        = cookies["ct0"]
+
+            # Save fresh token back to pool
+            key = uname.lower()
+            if key in pool_map:
+                pool[pool_map[key]].setdefault("cookies", {})
+                pool[pool_map[key]]["cookies"]["auth_token"] = auth_token
+                pool[pool_map[key]]["cookies"]["ct0"]        = ct0
+            else:
+                pool.append({"username": uname, "cookies": cookies})
+                pool_map[key] = len(pool) - 1
+            if PC_STATE["ok"] % 10 == 0:
+                try:
+                    with open(pool_path, "w") as f:
+                        json.dump(pool, f, indent=2)
+                except Exception:
+                    pass
+
+            # Step 2 — post comment
+            res = _tp.post_reply(comment, tweet_id, auth_token, ct0)
+            if res.get("ok"):
+                PC_STATE["ok"] += 1
+                entry = {"username": uname, "status": "ok", "msg": f"tweet:{res.get('tweet_id','')}", "comment": comment[:60]}
+            else:
+                PC_STATE["fail"] += 1
+                entry = {"username": uname, "status": "comment_fail", "msg": res.get("error","")[:80], "comment": comment[:60]}
+            PC_STATE["log"].insert(0, entry)
+            PC_STATE["log"] = PC_STATE["log"][:300]
+
+            time.sleep(_rnd.uniform(2.0, 5.0))
+
+        # Final save
+        try:
+            with open(pool_path, "w") as f:
+                json.dump(pool, f, indent=2)
+        except Exception:
+            pass
+        PC_STATE["running"] = False
+        add_log(f"Proxy-comment done: ✅{PC_STATE['ok']} ❌{PC_STATE['fail']} / {PC_STATE['total']}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": jid, "total": len(json.load(open(
+        os.path.join(os.path.dirname(__file__), "tools", "accounts_creds.json"))))})
+
+
+@app.route("/api/proxy-comment/status")
+def api_proxy_comment_status():
+    s = PC_STATE
+    done = s["done"] or 1
+    pct = round(s["done"] / max(s["total"], 1) * 100, 1)
+    return jsonify({
+        "running": s["running"], "job_id": s["job_id"],
+        "total": s["total"], "done": s["done"],
+        "ok": s["ok"], "fail": s["fail"], "pct": pct,
+        "log": s["log"][:40], "error": s["error"],
+    })
+
+
+@app.route("/api/proxy-comment/stop", methods=["POST"])
+def api_proxy_comment_stop():
+    PC_STATE["running"] = False
+    return jsonify({"ok": True})
+
+
+# ── Direct-Comment job state (single valid token, rotating texts) ────────────
+DC_STATE = {"running": False, "total": 0, "done": 0, "ok": 0, "fail": 0,
+            "log": [], "error": "", "job_id": ""}
+
+
+@app.route("/api/direct-comment", methods=["POST"])
+def api_direct_comment():
+    """Post N comments using the verified targets.json token, rotating through scraped texts."""
+    if DC_STATE["running"]:
+        return jsonify({"ok": False, "error": "Already running"}), 409
+    data = request.json or {}
+    tweet_url    = (data.get("tweet_url") or "").strip()
+    count        = data.get("count", 80)
+    delay_min    = float(data.get("delay_min", 30))
+    delay_max    = float(data.get("delay_max", 90))
+    custom_texts = [t.strip() for t in (data.get("texts") or []) if str(t).strip()]
+    try:
+        count = int(count)
+    except (ValueError, TypeError):
+        count = 80
+
+    if not tweet_url:
+        return jsonify({"ok": False, "error": "tweet_url required"}), 400
+
+    import uuid as _uuid3
+    jid = _uuid3.uuid4().hex[:8]
+    DC_STATE.update({"running": True, "total": count, "done": 0, "ok": 0, "fail": 0,
+                     "log": [], "error": "", "job_id": jid})
+
+    def _run():
+        import sys as _sys, random as _rnd
+        _sys.path.insert(0, "tools")
+        import twitter_post as _tp
+
+        cfg_path     = os.path.join(os.path.dirname(__file__), "tools", "targets.json")
+        replies_path = os.path.join(os.path.dirname(__file__), "tools", "scraped_replies.json")
+        try:
+            cfg = json.load(open(cfg_path))
+        except Exception as e:
+            DC_STATE.update({"running": False, "error": f"Cannot load targets.json: {e}"})
+            return
+
+        auth_token = cfg.get("twitter_auth_token", "")
+        ct0        = cfg.get("twitter_ct0", "")
+        if not auth_token or not ct0:
+            DC_STATE.update({"running": False, "error": "No auth_token/ct0 in targets.json"})
+            return
+
+        tweet_id = _tp.extract_tweet_id(tweet_url)
+        if not tweet_id:
+            DC_STATE.update({"running": False, "error": f"Cannot extract tweet ID from: {tweet_url}"})
+            return
+
+        # Build comment pool
+        texts = list(custom_texts)
+        if not texts:
+            try:
+                sr = json.load(open(replies_path))
+                texts = sr.get("texts", [])
+            except Exception:
+                texts = []
+        if not texts:
+            DC_STATE.update({"running": False, "error": "No comment texts available. Add texts or run scrape first."})
+            return
+
+        _rnd.shuffle(texts)
+        DC_STATE["total"] = count
+        add_log(f"Direct-comment started: {count} posts on tweet {tweet_id} using main account")
+
+        for i in range(count):
+            if not DC_STATE["running"]:
+                break
+            comment = texts[i % len(texts)]
+            res = _tp.post_reply(comment, tweet_id, auth_token, ct0)
+            DC_STATE["done"] += 1
+            if res.get("ok"):
+                DC_STATE["ok"] += 1
+                entry = {"idx": i + 1, "status": "ok",
+                         "msg": f"tweet_id:{res.get('tweet_id', '')}",
+                         "comment": comment[:80]}
+            else:
+                DC_STATE["fail"] += 1
+                entry = {"idx": i + 1, "status": "fail",
+                         "msg": res.get("error", "")[:100],
+                         "comment": comment[:80]}
+            DC_STATE["log"].insert(0, entry)
+            DC_STATE["log"] = DC_STATE["log"][:200]
+
+            if i < count - 1 and DC_STATE["running"]:
+                wait = _rnd.uniform(delay_min, delay_max)
+                time.sleep(wait)
+
+        DC_STATE["running"] = False
+        add_log(f"Direct-comment done: ✅{DC_STATE['ok']} ❌{DC_STATE['fail']} / {DC_STATE['total']}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "job_id": jid, "total": count})
+
+
+@app.route("/api/direct-comment/status")
+def api_direct_comment_status():
+    s = DC_STATE
+    pct = round(s["done"] / max(s["total"], 1) * 100, 1)
+    return jsonify({
+        "running": s["running"], "job_id": s["job_id"],
+        "total": s["total"], "done": s["done"],
+        "ok": s["ok"], "fail": s["fail"], "pct": pct,
+        "log": s["log"][:40], "error": s["error"],
+    })
+
+
+@app.route("/api/direct-comment/stop", methods=["POST"])
+def api_direct_comment_stop():
+    DC_STATE["running"] = False
+    return jsonify({"ok": True})
+
+
+@app.route("/api/webshare-proxies", methods=["GET"])
+def api_webshare_proxies():
+    """Fetch proxy list from Webshare API and return as URL list.
+    Handles both static proxy plans and rotating residential plans."""
+    api_key = os.environ.get("WEBSHARE_API_KEY", "")
+    if not api_key:
+        return jsonify({"ok": False, "error": "WEBSHARE_API_KEY not configured"})
+    try:
+        import urllib.request as _ur
+        from urllib.error import HTTPError
+
+        # Try static proxy list first (works for datacenter/static plans)
+        proxies = []
+        try:
+            req = _ur.Request(
+                "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=200",
+                headers={"Authorization": f"Token {api_key}"}
+            )
+            with _ur.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            for p in data.get("results", []):
+                if p.get("valid"):
+                    url = f"http://{p['username']}:{p['password']}@{p['proxy_address']}:{p['port']}"
+                    proxies.append({"url": url, "country": p.get("country_code",""), "city": p.get("city_name","")})
+        except (HTTPError, Exception):
+            pass  # 400 = residential plan, fall through to rotating config
+
+        if proxies:
+            return jsonify({"ok": True, "count": len(proxies), "proxies": proxies, "rotating": False})
+
+        # No static proxies — rotating residential plan
+        # Get credentials from proxy config
+        req2 = _ur.Request(
+            "https://proxy.webshare.io/api/v2/proxy/config/",
+            headers={"Authorization": f"Token {api_key}"}
+        )
+        with _ur.urlopen(req2, timeout=10) as resp2:
+            cfg = json.loads(resp2.read())
+
+        username = cfg.get("username", "")
+        password = cfg.get("password", "")
+        if not username or not password:
+            return jsonify({"ok": False, "error": "Could not get rotating proxy credentials from Webshare"})
+
+        endpoint = f"http://{username}:{password}@p.webshare.io:80"
+        # Count available countries (exclude Africa)
+        _AFRICA = {"AF","AO","BJ","BF","BI","CM","CF","TD","KM","CG","CD","CI","DJ","EG","GQ","ER",
+                   "ET","GA","GM","GH","GN","GW","KE","LS","LR","LY","MG","MW","ML","MR","MU","MA",
+                   "MZ","NA","NE","NG","RW","ST","SN","SL","SO","ZA","SS","SD","SZ","TZ","TG","TN",
+                   "UG","ZM","ZW"}
+        countries_pool = [c for c in cfg.get("countries", {}).keys() if c not in _AFRICA]
+        return jsonify({
+            "ok": True,
+            "rotating": True,
+            "endpoint": endpoint,
+            "count": 1,
+            "proxies": [{"url": endpoint, "country": "ROTATING", "city": ""}],
+            "countries_available": len(countries_pool),
+            "message": f"Rotating residential endpoint — {len(countries_pool)} countries available (Africa excluded)"
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:120]})
+
+
+@app.route("/api/bulk-update-cookies", methods=["POST"])
+def api_bulk_update_cookies():
+    data = request.json or {}
+    updates = data.get("accounts", [])
+    if not updates:
+        return jsonify({"ok": False, "error": "accounts list is required"})
+    pool_path = os.path.join(os.path.dirname(__file__), "tools", "cookies.json")
+    try:
+        with open(pool_path) as f:
+            pool = json.load(f)
+    except Exception:
+        pool = []
+    pool_map = {acc.get("username","").lower(): i for i, acc in enumerate(pool)}
+    updated = 0
+    added = 0
+    for item in updates:
+        username   = item.get("username","").strip()
+        auth_token = item.get("auth_token","").strip()
+        ct0        = item.get("ct0","").strip()
+        if not username or not auth_token or not ct0:
+            continue
+        key = username.lower()
+        if key in pool_map:
+            pool[pool_map[key]].setdefault("cookies", {})
+            pool[pool_map[key]]["cookies"]["auth_token"] = auth_token
+            pool[pool_map[key]]["cookies"]["ct0"] = ct0
+            updated += 1
+        else:
+            pool.append({"username": username, "cookies": {"auth_token": auth_token, "ct0": ct0}})
+            pool_map[key] = len(pool) - 1
+            added += 1
+    with open(pool_path, "w") as f:
+        json.dump(pool, f, indent=2)
+    return jsonify({"ok": True, "updated": updated, "added": added,
+                    "message": f"Updated {updated} accounts, added {added} new"})
 
 
 @app.route("/api/update-cookies", methods=["POST"])
