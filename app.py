@@ -639,9 +639,9 @@ async def handle_telegram_commands():
                                     if not auth_token or not ct0:
                                         asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                         return
-                                    add_log(f"Scraping followers of @{u} via v1.1 API…")
-                                    asyncio.run(tb.send_message(f"🔍 Scraping followers of @{u} via Twitter API… (fetching all)"))
-                                    result = _sfg(u, auth_token, ct0)
+                                    add_log(f"Scraping followers of @{u} via v1.1 API (up to 1,000)…")
+                                    asyncio.run(tb.send_message(f"🔍 Fetching up to 1,000 followers of @{u}…"))
+                                    result = _sfg(u, auth_token, ct0, limit=1000)
                                     if not result.get("ok"):
                                         asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
                                         return
@@ -750,9 +750,9 @@ async def handle_telegram_commands():
                                     if not auth_token or not ct0:
                                         asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                         return
-                                    add_log(f"Scraping following of @{u} via v1.1 API…")
-                                    asyncio.run(tb.send_message(f"🔍 Scraping following of @{u} via Twitter API… (fetching all)"))
-                                    result = _sfoG(u, auth_token, ct0)
+                                    add_log(f"Scraping following of @{u} via v1.1 API (up to 1,000)…")
+                                    asyncio.run(tb.send_message(f"🔍 Fetching up to 1,000 following of @{u}…"))
+                                    result = _sfoG(u, auth_token, ct0, limit=1000)
                                     if not result.get("ok"):
                                         asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
                                         return
