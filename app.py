@@ -1831,7 +1831,11 @@ def start_telegram_listener():
         try:
             asyncio.run(handle_telegram_commands())
         except Exception as _exc:
-            add_log(f"⚠️ Telegram listener crashed ({_exc!r}) — restarting in 10 s")
+            import traceback as _tb
+            _msg = f"⚠️ Telegram listener crashed ({_exc!r}) — restarting in 10 s"
+            add_log(_msg)
+            print(_msg, flush=True)
+            print(_tb.format_exc(), flush=True)
             time.sleep(10)
 
 
