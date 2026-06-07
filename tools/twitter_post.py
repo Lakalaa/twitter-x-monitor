@@ -52,12 +52,14 @@ _TWEETDETAIL_QUERY_IDS = [
 ]
 
 _FOLLOWERS_QUERY_IDS = [
-    "Wp9x7NPOJ5klmf5H-350gw",        # current (June 2026)
+    "G1uS7V_A_IqHhF9Il0K-nA",        # current (June 2026)
+    "Wp9x7NPOJ5klmf5H-350gw",
     "iYaPJI11EY8VtCL3hrKU9A",        # BlueVerifiedFollowers fallback
 ]
 
 _FOLLOWING_QUERY_IDS = [
-    "XRzHZz4sLnhSgz55WGMCbg",        # current (June 2026)
+    "U96721pgL7wU5QUwu2goUA",        # current (June 2026)
+    "XRzHZz4sLnhSgz55WGMCbg",
 ]
 
 _SCRAPE_FEATURES = json.dumps({
@@ -1051,10 +1053,76 @@ def scrape_replies_with_keywords(
     return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
 
 
+def _scrape_v1_list(endpoint: str, username: str, auth_token: str, ct0: str,
+                    limit: int = 999999) -> dict:
+    """
+    Scrape followers or following using Twitter v1.1 REST API with cursor pagination.
+    endpoint: 'followers/list' (followers) or 'friends/list' (following).
+    Returns {"ok": True, "users": [...], "count": N} or {"ok": False, "error": "..."}
+    """
+    import urllib.parse as _up
+    hdrs = _headers(auth_token, ct0)
+    users: list = []
+    seen: set = set()
+    cursor = -1
+
+    for _page in range(500):
+        params = _up.urlencode({
+            "screen_name": username,
+            "count": 200,
+            "cursor": cursor,
+            "skip_status": True,
+            "include_user_entities": False,
+        })
+        url = f"https://api.twitter.com/1.1/{endpoint}.json?{params}"
+        status, body = _http_get(url, hdrs, retries=3)
+
+        if status == 429:
+            return {"ok": False, "error": "Rate limited (429) — try again in a few minutes"}
+        if status == 401:
+            return {"ok": False, "error": "Auth token rejected (401) — update auth_token + ct0 in Settings"}
+        if status != 200:
+            if users:
+                break
+            return {"ok": False, "error": f"HTTP {status}: {body[:200]}"}
+
+        try:
+            data = json.loads(body)
+        except Exception:
+            return {"ok": False, "error": "Invalid JSON from Twitter API"}
+
+        if isinstance(data, dict) and data.get("errors"):
+            err = data["errors"][0] if isinstance(data["errors"], list) else data["errors"]
+            return {"ok": False, "error": str(err)}
+
+        for u in data.get("users", []):
+            sn = u.get("screen_name", "").strip()
+            if not sn or sn.lower() in seen:
+                continue
+            seen.add(sn.lower())
+            users.append({
+                "screen_name": sn,
+                "name": u.get("name", sn),
+                "followers_count": u.get("followers_count", 0),
+                "following_count": u.get("friends_count", 0),
+                "tweet_count": u.get("statuses_count", 0),
+                "verified": u.get("verified", False),
+                "created_at": u.get("created_at", ""),
+                "description": u.get("description", ""),
+            })
+
+        next_cursor = str(data.get("next_cursor_str", "0"))
+        if not next_cursor or next_cursor == "0" or len(users) >= limit:
+            break
+        cursor = next_cursor
+
+    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
+
+
 def _resolve_user_id(username: str, auth_token: str, ct0: str) -> str:
     """Resolve a Twitter screen_name to a numeric user ID via GraphQL."""
     import urllib.parse as _up
-    _QUERY_IDS = ["IGgvgiOx4QZndDHuD3x9TQ", "xmU6X_CKVnQ5BltcLoxFGA", "G3KGOASz96M-Ou3vSqKxfA"]
+    _QUERY_IDS = ["IGgvgiOx4QZndDHuD3x9TQ", "G3KGOASz96M-Qu0nwmGXNg", "xmU6X_CKVnQ5BltcLoxFGA", "G3KGOASz96M-Ou3vSqKxfA"]
     hdrs = _headers(auth_token, ct0)
     features = json.dumps({
         "hidden_profile_likes_enabled": True,
@@ -1126,112 +1194,121 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
                              skip_verified: bool = False,
                              skip_bots: bool = False) -> dict:
     """
-    Fetch followers of a Twitter account via GraphQL (no Scweet needed).
-    Returns {"ok": True, "users": [...dicts with screen_name/name/followers_count], "count": N}
-           | {"ok": False, "error": "..."}
-    Filters:
-      skip_verified — drop blue-tick / verified accounts
-      skip_bots     — drop accounts that look like bots/spam/groups
-                      (uses _is_likely_bot() heuristics)
-    Stops as soon as `limit` *passing* accounts have been collected.
+    Fetch followers of a Twitter account.
+    Tries v1.1 REST API first (most reliable), falls back to GraphQL.
+    Returns {"ok": True, "users": [...], "count": N} | {"ok": False, "error": "..."}
     """
+    # ── Primary: v1.1 REST API ──────────────────────────────────────────────
+    result = _scrape_v1_list("followers/list", username, auth_token, ct0, limit)
+    if result.get("ok") and result.get("users"):
+        users = result["users"]
+        if skip_verified:
+            users = [u for u in users if not u.get("verified")]
+        if skip_bots:
+            users = [u for u in users if not _is_likely_bot(u)]
+        return {"ok": True, "users": users, "count": len(users)}
+    v1_error = result.get("error", "v1.1 returned 0 results")
+
+    # ── Fallback: GraphQL ───────────────────────────────────────────────────
     import urllib.parse as _up
 
     uid = _resolve_user_id(username, auth_token, ct0)
     if not uid:
-        return {"ok": False, "error": f"Could not resolve @{username} to a user ID"}
+        return {"ok": False, "error": f"Could not resolve @{username} — {v1_error}"}
 
     _QUERY_IDS = _FOLLOWERS_QUERY_IDS + ["9-uRROAZQPxhkXIbT5hFZA", "djdTXizios1zWqhGkmHB8A"]
     hdrs = _headers(auth_token, ct0)
-    last_error = "All query IDs failed"
+    last_error = v1_error
 
     for qid in _QUERY_IDS:
-        _URL = f"https://api.twitter.com/graphql/{qid}/Followers"
-        seen: set = set()
-        users: list = []
-        cursor = None
-        qid_ok = False
-        empty_pages = 0
+        for domain in ["twitter.com/i/api", "api.twitter.com"]:
+            _URL = f"https://{domain}/graphql/{qid}/Followers"
+            seen: set = set()
+            users: list = []
+            cursor = None
+            qid_ok = False
+            empty_pages = 0
 
-        for _page in range(100):
-            variables = {"userId": uid, "count": 20, "includePromotedContent": False}
-            if cursor:
-                variables["cursor"] = cursor
-            params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
-            status, body = _http_get(f"{_URL}?{params}", hdrs, retries=3)
+            for _page in range(100):
+                variables = {"userId": uid, "count": 20, "includePromotedContent": False}
+                if cursor:
+                    variables["cursor"] = cursor
+                params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
+                status, body = _http_get(f"{_URL}?{params}", hdrs, retries=3)
 
-            if status in (403, 400):
-                last_error = f"Query ID {qid} rejected ({status})"
+                if status in (404, 403, 400):
+                    last_error = f"GraphQL {qid} rejected ({status})"
+                    break
+                if status == 429:
+                    last_error = "Rate limited (429)"
+                    break
+                if status != 200:
+                    last_error = f"HTTP {status}"; break
+
+                qid_ok = True
+                try:
+                    data = json.loads(body)
+                except Exception:
+                    last_error = "Invalid JSON"; break
+
+                if data.get("errors"):
+                    last_error = "; ".join(e.get("message","?") for e in data["errors"][:2])
+                    break
+
+                instructions = (
+                    data.get("data", {})
+                        .get("user", {})
+                        .get("result", {})
+                        .get("timeline", {})
+                        .get("timeline", {})
+                        .get("instructions", [])
+                )
+
+                next_cursor = None
+                found = 0
+                for instr in instructions:
+                    for entry in instr.get("entries", []):
+                        eid = entry.get("entryId", "")
+                        content = entry.get("content", {})
+                        if eid.startswith("user-"):
+                            result_obj = (content.get("itemContent", {})
+                                                 .get("user_results", {})
+                                                 .get("result", {}))
+                            legacy = result_obj.get("legacy", {})
+                            core   = result_obj.get("core", {})
+                            sn = (legacy.get("screen_name") or core.get("screen_name", "")).strip()
+                            if not sn or sn.lower() in seen:
+                                continue
+                            is_verified = (legacy.get("verified", False)
+                                           or legacy.get("is_blue_verified", False)
+                                           or bool(result_obj.get("is_blue_verified")))
+                            if skip_verified and is_verified:
+                                continue
+                            if skip_bots and _is_likely_bot(legacy):
+                                continue
+                            seen.add(sn.lower())
+                            users.append({
+                                "screen_name": sn,
+                                "name": legacy.get("name") or core.get("name", sn),
+                                "followers_count": legacy.get("followers_count", 0),
+                                "following_count": legacy.get("friends_count", 0),
+                                "tweet_count": legacy.get("statuses_count", 0),
+                                "verified": is_verified,
+                                "created_at": legacy.get("created_at") or core.get("created_at", ""),
+                                "description": legacy.get("description", ""),
+                            })
+                            found += 1
+                        if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
+                            next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
+
+                empty_pages = 0 if found else empty_pages + 1
+                if len(users) >= limit or not next_cursor or empty_pages >= 3:
+                    break
+                cursor = next_cursor
+
+            if qid_ok and users:
                 break
-            if status == 429:
-                last_error = "Rate limited (429) — try again in a few minutes"
-                break
-            if status == 0:
-                last_error = body; break
-            if status != 200:
-                last_error = f"HTTP {status}: {body[:200]}"; break
-
-            qid_ok = True
-            try:
-                data = json.loads(body)
-            except Exception:
-                last_error = "Invalid JSON"; break
-
-            if data.get("errors"):
-                last_error = "; ".join(e.get("message","?") for e in data["errors"][:2])
-                break
-
-            instructions = (
-                data.get("data", {})
-                    .get("user", {})
-                    .get("result", {})
-                    .get("timeline", {})
-                    .get("timeline", {})
-                    .get("instructions", [])
-            )
-
-            next_cursor = None
-            found = 0
-            for instr in instructions:
-                for entry in instr.get("entries", []):
-                    eid = entry.get("entryId", "")
-                    content = entry.get("content", {})
-                    if eid.startswith("user-"):
-                        result_obj = (content.get("itemContent", {})
-                                             .get("user_results", {})
-                                             .get("result", {}))
-                        legacy = result_obj.get("legacy", {})
-                        sn = legacy.get("screen_name", "").strip()
-                        if not sn or sn.lower() in seen:
-                            continue
-                        is_verified = (legacy.get("verified", False)
-                                       or legacy.get("is_blue_verified", False)
-                                       or bool(result_obj.get("is_blue_verified")))
-                        if skip_verified and is_verified:
-                            continue
-                        if skip_bots and _is_likely_bot(legacy):
-                            continue
-                        seen.add(sn.lower())
-                        users.append({
-                            "screen_name": sn,
-                            "name": legacy.get("name", sn),
-                            "followers_count": legacy.get("followers_count", 0),
-                            "following_count": legacy.get("friends_count", 0),
-                            "tweet_count": legacy.get("statuses_count", 0),
-                            "verified": is_verified,
-                            "created_at": legacy.get("created_at", ""),
-                            "description": legacy.get("description", ""),
-                        })
-                        found += 1
-                    if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
-                        next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
-
-            empty_pages = 0 if found else empty_pages + 1
-            if len(users) >= limit or not next_cursor or empty_pages >= 3:
-                break
-            cursor = next_cursor
-
-        if qid_ok and users:
+        if users:
             break
 
     if not users:
@@ -1243,99 +1320,115 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
 def scrape_following_graphql(username: str, auth_token: str, ct0: str,
                               limit: int = 999999) -> dict:
     """
-    Fetch accounts a Twitter user follows via GraphQL (no Scweet needed).
+    Fetch accounts a Twitter user follows.
+    Tries v1.1 REST API first (most reliable), falls back to GraphQL.
     Returns same shape as scrape_followers_graphql.
     """
+    # ── Primary: v1.1 REST API ──────────────────────────────────────────────
+    result = _scrape_v1_list("friends/list", username, auth_token, ct0, limit)
+    if result.get("ok") and result.get("users"):
+        return result
+    v1_error = result.get("error", "v1.1 returned 0 results")
+
+    # ── Fallback: GraphQL ───────────────────────────────────────────────────
     import urllib.parse as _up
 
     uid = _resolve_user_id(username, auth_token, ct0)
     if not uid:
-        return {"ok": False, "error": f"Could not resolve @{username} to a user ID"}
+        return {"ok": False, "error": f"Could not resolve @{username} — {v1_error}"}
 
     _QUERY_IDS = _FOLLOWING_QUERY_IDS + ["iSicc7LrzWGBgDPL0tM_TQ", "f0q-KKOTxb1yFpQEEfFmFQ"]
     hdrs = _headers(auth_token, ct0)
-    last_error = "All query IDs failed"
+    last_error = v1_error
 
     for qid in _QUERY_IDS:
-        _URL = f"https://api.twitter.com/graphql/{qid}/Following"
-        seen: set = set()
-        users: list = []
-        cursor = None
-        qid_ok = False
-        empty_pages = 0
+        for domain in ["twitter.com/i/api", "api.twitter.com"]:
+            _URL = f"https://{domain}/graphql/{qid}/Following"
+            seen: set = set()
+            users: list = []
+            cursor = None
+            qid_ok = False
+            empty_pages = 0
 
-        for _page in range(100):
-            variables = {"userId": uid, "count": 20, "includePromotedContent": False}
-            if cursor:
-                variables["cursor"] = cursor
-            params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
-            status, body = _http_get(f"{_URL}?{params}", hdrs, retries=3)
+            for _page in range(100):
+                variables = {"userId": uid, "count": 20, "includePromotedContent": False}
+                if cursor:
+                    variables["cursor"] = cursor
+                params = _up.urlencode({"variables": json.dumps(variables), "features": _SCRAPE_FEATURES})
+                status, body = _http_get(f"{_URL}?{params}", hdrs, retries=3)
 
-            if status in (403, 400):
-                last_error = f"Query ID {qid} rejected ({status})"
+                if status in (404, 403, 400):
+                    last_error = f"GraphQL {qid} rejected ({status})"
+                    break
+                if status == 429:
+                    last_error = "Rate limited (429)"; break
+                if status != 200:
+                    last_error = f"HTTP {status}"; break
+
+                qid_ok = True
+                try:
+                    data = json.loads(body)
+                except Exception:
+                    last_error = "Invalid JSON"; break
+
+                if data.get("errors"):
+                    last_error = "; ".join(e.get("message","?") for e in data["errors"][:2])
+                    break
+
+                instructions = (
+                    data.get("data", {})
+                        .get("user", {})
+                        .get("result", {})
+                        .get("timeline", {})
+                        .get("timeline", {})
+                        .get("instructions", [])
+                )
+
+                next_cursor = None
+                found = 0
+                for instr in instructions:
+                    for entry in instr.get("entries", []):
+                        eid = entry.get("entryId", "")
+                        content = entry.get("content", {})
+                        if eid.startswith("user-"):
+                            result_obj = (content.get("itemContent", {})
+                                                 .get("user_results", {})
+                                                 .get("result", {}))
+                            legacy = result_obj.get("legacy", {})
+                            core   = result_obj.get("core", {})
+                            sn = (legacy.get("screen_name") or core.get("screen_name", "")).strip()
+                            if sn and sn.lower() not in seen:
+                                seen.add(sn.lower())
+                                users.append({
+                                    "screen_name": sn,
+                                    "name": legacy.get("name") or core.get("name", sn),
+                                    "followers_count": legacy.get("followers_count", 0),
+                                    "following_count": legacy.get("friends_count", 0),
+                                    "tweet_count": legacy.get("statuses_count", 0),
+                                    "verified": (legacy.get("verified", False)
+                                                 or legacy.get("is_blue_verified", False)
+                                                 or bool(result_obj.get("is_blue_verified"))),
+                                    "created_at": legacy.get("created_at") or core.get("created_at", ""),
+                                    "description": legacy.get("description", ""),
+                                })
+                                found += 1
+                        if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
+                            next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
+
+                empty_pages = 0 if found else empty_pages + 1
+                if len(users) >= limit or not next_cursor or empty_pages >= 3:
+                    break
+                cursor = next_cursor
+
+            if qid_ok and users:
                 break
-            if status == 429:
-                last_error = "Rate limited (429)"; break
-            if status == 0:
-                last_error = body; break
-            if status != 200:
-                last_error = f"HTTP {status}: {body[:200]}"; break
-
-            qid_ok = True
-            try:
-                data = json.loads(body)
-            except Exception:
-                last_error = "Invalid JSON"; break
-
-            if data.get("errors"):
-                last_error = "; ".join(e.get("message","?") for e in data["errors"][:2])
-                break
-
-            instructions = (
-                data.get("data", {})
-                    .get("user", {})
-                    .get("result", {})
-                    .get("timeline", {})
-                    .get("timeline", {})
-                    .get("instructions", [])
-            )
-
-            next_cursor = None
-            found = 0
-            for instr in instructions:
-                for entry in instr.get("entries", []):
-                    eid = entry.get("entryId", "")
-                    content = entry.get("content", {})
-                    if eid.startswith("user-"):
-                        legacy = (content.get("itemContent", {})
-                                         .get("user_results", {})
-                                         .get("result", {})
-                                         .get("legacy", {}))
-                        sn = legacy.get("screen_name", "").strip()
-                        if sn and sn.lower() not in seen:
-                            seen.add(sn.lower())
-                            users.append({
-                                "screen_name": sn,
-                                "name": legacy.get("name", sn),
-                                "followers_count": legacy.get("followers_count", 0),
-                                "verified": legacy.get("verified", False) or legacy.get("is_blue_verified", False),
-                            })
-                            found += 1
-                    if "cursor-bottom" in eid or content.get("cursorType") == "Bottom":
-                        next_cursor = content.get("value") or content.get("itemContent", {}).get("value")
-
-            empty_pages = 0 if found else empty_pages + 1
-            if len(users) >= limit or not next_cursor or empty_pages >= 3:
-                break
-            cursor = next_cursor
-
-        if qid_ok and users:
+        if users:
             break
 
     if not users:
         return {"ok": True, "users": [], "count": 0,
                 "message": last_error or f"No following found for @{username}"}
-    return {"ok": True, "users": users, "count": len(users)}
+    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
 
 
 def auto_refresh_ct0(auth_token: str) -> str:
