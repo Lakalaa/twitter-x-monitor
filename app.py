@@ -632,17 +632,15 @@ async def handle_telegram_commands():
                                         lambda: s.get_followers([u], limit=None, save=True, resume=False),
                                         "followers", u
                                     )
-                                    if not users:
-                                        return
-                                else:
-                                    # GraphQL fallback — works on Render without Scweet
+                                # Fall through to v1.1 API if Scweet unavailable or returned 0
+                                if not users:
                                     from twitter_post import scrape_followers_graphql as _sfg, get_auth_from_config as _gac
                                     auth_token, ct0 = _gac()
                                     if not auth_token or not ct0:
                                         asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                         return
-                                    add_log(f"Scraping followers of @{u} via GraphQL…")
-                                    asyncio.run(tb.send_message(f"🔍 Scraping followers of @{u} via GraphQL… (fetching all)"))
+                                    add_log(f"Scraping followers of @{u} via v1.1 API…")
+                                    asyncio.run(tb.send_message(f"🔍 Scraping followers of @{u} via Twitter API… (fetching all)"))
                                     result = _sfg(u, auth_token, ct0)
                                     if not result.get("ok"):
                                         asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
@@ -745,17 +743,15 @@ async def handle_telegram_commands():
                                         lambda: s.get_following([u], limit=None, save=True, resume=False),
                                         "following", u
                                     )
-                                    if not users:
-                                        return
-                                else:
-                                    # GraphQL fallback — works on Render without Scweet
+                                # Fall through to v1.1 API if Scweet unavailable or returned 0
+                                if not users:
                                     from twitter_post import scrape_following_graphql as _sfoG, get_auth_from_config as _gac
                                     auth_token, ct0 = _gac()
                                     if not auth_token or not ct0:
                                         asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                         return
-                                    add_log(f"Scraping following of @{u} via GraphQL…")
-                                    asyncio.run(tb.send_message(f"🔍 Scraping following of @{u} via GraphQL… (fetching all)"))
+                                    add_log(f"Scraping following of @{u} via v1.1 API…")
+                                    asyncio.run(tb.send_message(f"🔍 Scraping following of @{u} via Twitter API… (fetching all)"))
                                     result = _sfoG(u, auth_token, ct0)
                                     if not result.get("ok"):
                                         asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
