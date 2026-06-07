@@ -4045,15 +4045,19 @@ def _start_background_services():
 
 
 # gunicorn imports this module, so we use a flag to avoid double-starting
+# Lock prevents race condition with gunicorn's 4 threads all hitting _before_request simultaneously
 _started = False
+_start_lock = threading.Lock()
 
 
 @app.before_request
 def _ensure_started():
     global _started
     if not _started:
-        _started = True
-        _start_background_services()
+        with _start_lock:
+            if not _started:          # double-checked locking
+                _started = True
+                _start_background_services()
 
 
 if __name__ == "__main__":
