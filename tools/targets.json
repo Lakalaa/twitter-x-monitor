@@ -1,5 +1,5 @@
 {
-  "twitter_auth_token": "b59f5c5668fc2a8aea44b59fec6cc7ee6c9edb2d",
+  "twitter_auth_token": "b39cde932478787c06e3f392fb650fd31fd9b086",
   "track_followers_of": [
     "elonmusk",
     "OpenAI"
@@ -18,5 +18,5 @@
     }
   ],
   "check_interval_minutes": 60,
-  "twitter_ct0": "824b76fcf5cea4ffc87c1d5b89ea18b09c4d5b9a313660b0a71c5dfb54acdfdbb9f68e91cf3cc0278906742285e7c6b201a422cb33ebcae2026dbebd2a5a4878b35f06d20b44b2d83efb50d1a1d3d02c"
+  "twitter_ct0": "2bad070b7665a8fcd86bd42a08ecb30aa3f7f14f30c8bec9f9659cf049c35cfe955286922b31e72b86aa269ca11000ed8a39ee6dafa638c4d82e41dd2f891b7df249897443c4a9802898ed4098529508"
 }
