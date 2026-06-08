@@ -1054,17 +1054,20 @@ def scrape_replies_with_keywords(
 
 
 def _scrape_v1_list(endpoint: str, username: str, auth_token: str, ct0: str,
-                    limit: int = 999999) -> dict:
+                    limit: int = 999999, start_cursor: str = "-1") -> dict:
     """
     Scrape followers or following using Twitter v1.1 REST API with cursor pagination.
     endpoint: 'followers/list' (followers) or 'friends/list' (following).
-    Returns {"ok": True, "users": [...], "count": N} or {"ok": False, "error": "..."}
+    start_cursor: resume from a saved cursor position ("-1" means start from beginning).
+    Returns {"ok": True, "users": [...], "count": N, "next_cursor": "..."} or {"ok": False, "error": "..."}
+    next_cursor is "0" when the end of the list has been reached.
     """
     import urllib.parse as _up
     hdrs = _headers(auth_token, ct0)
     users: list = []
     seen: set = set()
-    cursor = -1
+    cursor = start_cursor or "-1"
+    last_next_cursor = "0"
 
     for _page in range(500):
         params = _up.urlencode({
@@ -1111,12 +1114,19 @@ def _scrape_v1_list(endpoint: str, username: str, auth_token: str, ct0: str,
                 "description": u.get("description", ""),
             })
 
-        next_cursor = str(data.get("next_cursor_str", "0"))
-        if not next_cursor or next_cursor == "0" or len(users) >= limit:
+        last_next_cursor = str(data.get("next_cursor_str", "0"))
+        if not last_next_cursor or last_next_cursor == "0" or len(users) >= limit:
             break
-        cursor = next_cursor
+        cursor = last_next_cursor
 
-    return {"ok": True, "users": users[:limit], "count": min(len(users), limit)}
+    # If we stopped due to hitting the limit, last_next_cursor is the resume point.
+    # If we stopped because the list ended, last_next_cursor is "0".
+    return {
+        "ok": True,
+        "users": users[:limit],
+        "count": min(len(users), limit),
+        "next_cursor": last_next_cursor if len(users) >= limit else "0",
+    }
 
 
 def _resolve_user_id(username: str, auth_token: str, ct0: str) -> str:
@@ -1192,21 +1202,24 @@ def _is_likely_bot(legacy: dict) -> bool:
 def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
                              limit: int = 999999,
                              skip_verified: bool = False,
-                             skip_bots: bool = False) -> dict:
+                             skip_bots: bool = False,
+                             start_cursor: str = "-1") -> dict:
     """
     Fetch followers of a Twitter account.
     Tries v1.1 REST API first (most reliable), falls back to GraphQL.
-    Returns {"ok": True, "users": [...], "count": N} | {"ok": False, "error": "..."}
+    start_cursor: resume from a saved cursor ("-1" = start of list).
+    Returns {"ok": True, "users": [...], "count": N, "next_cursor": "..."} | {"ok": False, "error": "..."}
+    next_cursor "0" means end of follower list reached.
     """
     # ── Primary: v1.1 REST API ──────────────────────────────────────────────
-    result = _scrape_v1_list("followers/list", username, auth_token, ct0, limit)
+    result = _scrape_v1_list("followers/list", username, auth_token, ct0, limit, start_cursor)
     if result.get("ok") and result.get("users"):
         users = result["users"]
         if skip_verified:
             users = [u for u in users if not u.get("verified")]
         if skip_bots:
             users = [u for u in users if not _is_likely_bot(u)]
-        return {"ok": True, "users": users, "count": len(users)}
+        return {"ok": True, "users": users, "count": len(users), "next_cursor": result.get("next_cursor", "0")}
     v1_error = result.get("error", "v1.1 returned 0 results")
 
     # ── Fallback: GraphQL ───────────────────────────────────────────────────
@@ -1318,16 +1331,18 @@ def scrape_followers_graphql(username: str, auth_token: str, ct0: str,
 
 
 def scrape_following_graphql(username: str, auth_token: str, ct0: str,
-                              limit: int = 999999) -> dict:
+                              limit: int = 999999,
+                              start_cursor: str = "-1") -> dict:
     """
     Fetch accounts a Twitter user follows.
     Tries v1.1 REST API first (most reliable), falls back to GraphQL.
-    Returns same shape as scrape_followers_graphql.
+    start_cursor: resume from a saved cursor ("-1" = start of list).
+    Returns same shape as scrape_followers_graphql (includes next_cursor).
     """
     # ── Primary: v1.1 REST API ──────────────────────────────────────────────
-    result = _scrape_v1_list("friends/list", username, auth_token, ct0, limit)
+    result = _scrape_v1_list("friends/list", username, auth_token, ct0, limit, start_cursor)
     if result.get("ok") and result.get("users"):
-        return result
+        return result  # already includes next_cursor
     v1_error = result.get("error", "v1.1 returned 0 results")
 
     # ── Fallback: GraphQL ───────────────────────────────────────────────────
