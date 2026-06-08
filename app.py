@@ -233,9 +233,27 @@ def write_offset(kind: str, username: str, offset: int):
         f.write(str(offset))
 
 
+def _cursor_path(kind: str, username: str) -> str:
+    return os.path.join(_cache_dir(), f"{kind}_{username.lower()}.cursor")
+
+
+def read_cursor(kind: str, username: str) -> str:
+    """Return the saved API cursor for the next batch, or '-1' if at the start."""
+    p = _cursor_path(kind, username)
+    if os.path.exists(p):
+        with open(p) as f:
+            return f.read().strip() or "-1"
+    return "-1"
+
+
+def write_cursor(kind: str, username: str, cursor: str):
+    with open(_cursor_path(kind, username), "w") as f:
+        f.write(cursor)
+
+
 def clear_cache(kind: str, username: str):
-    """Delete cached list + offset so the next call re-scrapes from scratch."""
-    for p in (_cache_path(kind, username), _offset_path(kind, username)):
+    """Delete cached list + offset + cursor so the next call re-scrapes from scratch."""
+    for p in (_cache_path(kind, username), _offset_path(kind, username), _cursor_path(kind, username)):
         if os.path.exists(p):
             os.remove(p)
 
@@ -639,9 +657,11 @@ async def handle_telegram_commands():
                                     if not auth_token or not ct0:
                                         asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                         return
-                                    add_log(f"Scraping followers of @{u} via v1.1 API (up to 1,000)…")
-                                    asyncio.run(tb.send_message(f"🔍 Fetching up to 1,000 followers of @{u}…"))
-                                    result = _sfg(u, auth_token, ct0, limit=1000)
+                                    saved_cursor = read_cursor("followers", u)
+                                    batch_label = "next 1,000" if saved_cursor != "-1" else "first 1,000"
+                                    add_log(f"Scraping followers of @{u} via v1.1 API ({batch_label}, cursor={saved_cursor})…")
+                                    asyncio.run(tb.send_message(f"🔍 Fetching {batch_label} followers of @{u}…"))
+                                    result = _sfg(u, auth_token, ct0, limit=1000, start_cursor=saved_cursor)
                                     if not result.get("ok"):
                                         asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
                                         return
@@ -649,6 +669,8 @@ async def handle_telegram_commands():
                                     if not raw:
                                         asyncio.run(tb.send_message(f"⚠️ {result.get('message', f'No followers found for @{u}')}"))
                                         return
+                                    # Save cursor for next batch (or "0" if end of list)
+                                    write_cursor("followers", u, result.get("next_cursor", "0"))
                                     # Normalise to the same shape _format_user_line_html expects
                                     users = [{"username": r["screen_name"], "name": r.get("name", r["screen_name"]),
                                               "followers_count": r.get("followers_count", 0),
@@ -665,11 +687,20 @@ async def handle_telegram_commands():
                             page   = users[offset:offset + 500]
 
                             if not page:
-                                clear_cache("followers", u)
-                                asyncio.run(tb.send_message(
-                                    f"✅ All {total:,} followers of @{u} have been sent.\n"
-                                    f"The next /followers {u} will re-scrape fresh data."
-                                ))
+                                # Cache exhausted — check if more pages exist
+                                next_cur = read_cursor("followers", u)
+                                clear_cache("followers", u)  # clears list + offset only; cursor stays
+                                if next_cur and next_cur != "0":
+                                    asyncio.run(tb.send_message(
+                                        f"📥 All {total:,} cached followers sent.\n"
+                                        f"Send /followers {u} again to fetch the next 1,000."
+                                    ))
+                                else:
+                                    write_cursor("followers", u, "-1")  # reset to start
+                                    asyncio.run(tb.send_message(
+                                        f"✅ Reached the end of @{u}'s follower list ({total:,} sent).\n"
+                                        f"Send /followers {u} to start over from the beginning."
+                                    ))
                                 return
 
                             asyncio.run(tb.send_users_page(page, "followers", u, offset, total))
@@ -677,17 +708,27 @@ async def handle_telegram_commands():
                             add_log(f"Followers @{u}: sent {new_offset:,}/{total:,}")
 
                             if new_offset >= total:
+                                # This batch done — check if more pages exist via cursor
+                                next_cur = read_cursor("followers", u)
                                 clear_cache("followers", u)
-                                asyncio.run(tb.send_message(
-                                    f"✅ All {total:,} followers of @{u} sent.\n\n"
-                                    f"▶️ Same account again: /followers {u}\n"
-                                    f"▶️ Different account: /followers otherusername\n"
-                                    f"▶️ Force fresh re-scrape: /rescrape_followers {u}"
-                                ))
+                                if next_cur and next_cur != "0":
+                                    asyncio.run(tb.send_message(
+                                        f"📥 Sent {new_offset:,} followers so far.\n"
+                                        f"▶️ Next 1,000 from @{u}: /followers {u}\n"
+                                        f"▶️ Different account: /followers otherusername\n"
+                                        f"▶️ Start over: /rescrape_followers {u}"
+                                    ))
+                                else:
+                                    write_cursor("followers", u, "-1")  # reset to start
+                                    asyncio.run(tb.send_message(
+                                        f"✅ Reached the end of @{u}'s follower list ({new_offset:,} total sent).\n"
+                                        f"▶️ Start over from beginning: /followers {u}\n"
+                                        f"▶️ Different account: /followers otherusername"
+                                    ))
                             else:
                                 write_offset("followers", u, new_offset)
                                 asyncio.run(tb.send_message(
-                                    f"📄 Sent {new_offset:,} of {total:,} — {total - new_offset:,} remaining.\n\n"
+                                    f"📄 Sent {new_offset:,} of {total:,} in this batch — {total - new_offset:,} remaining.\n\n"
                                     f"▶️ Next 500 from @{u}: /followers {u}\n"
                                     f"▶️ Different account: /followers otherusername"
                                 ))
@@ -750,9 +791,11 @@ async def handle_telegram_commands():
                                     if not auth_token or not ct0:
                                         asyncio.run(tb.send_message("❌ No Twitter auth_token/ct0 set — add them in Settings."))
                                         return
-                                    add_log(f"Scraping following of @{u} via v1.1 API (up to 1,000)…")
-                                    asyncio.run(tb.send_message(f"🔍 Fetching up to 1,000 following of @{u}…"))
-                                    result = _sfoG(u, auth_token, ct0, limit=1000)
+                                    saved_cursor = read_cursor("following", u)
+                                    batch_label = "next 1,000" if saved_cursor != "-1" else "first 1,000"
+                                    add_log(f"Scraping following of @{u} via v1.1 API ({batch_label}, cursor={saved_cursor})…")
+                                    asyncio.run(tb.send_message(f"🔍 Fetching {batch_label} following of @{u}…"))
+                                    result = _sfoG(u, auth_token, ct0, limit=1000, start_cursor=saved_cursor)
                                     if not result.get("ok"):
                                         asyncio.run(tb.send_message(f"❌ {result.get('error','Unknown error')}"))
                                         return
@@ -760,6 +803,7 @@ async def handle_telegram_commands():
                                     if not raw:
                                         asyncio.run(tb.send_message(f"⚠️ {result.get('message', f'No following found for @{u}')}"))
                                         return
+                                    write_cursor("following", u, result.get("next_cursor", "0"))
                                     users = [{"username": r["screen_name"], "name": r.get("name", r["screen_name"]),
                                               "followers_count": r.get("followers_count", 0),
                                               "verified": r.get("verified", False)} for r in raw]
@@ -775,11 +819,19 @@ async def handle_telegram_commands():
                             page   = users[offset:offset + 500]
 
                             if not page:
+                                next_cur = read_cursor("following", u)
                                 clear_cache("following", u)
-                                asyncio.run(tb.send_message(
-                                    f"✅ All {total:,} following of @{u} have been sent.\n"
-                                    f"The next /following {u} will re-scrape fresh data."
-                                ))
+                                if next_cur and next_cur != "0":
+                                    asyncio.run(tb.send_message(
+                                        f"📥 All {total:,} cached following sent.\n"
+                                        f"Send /following {u} again to fetch the next 1,000."
+                                    ))
+                                else:
+                                    write_cursor("following", u, "-1")
+                                    asyncio.run(tb.send_message(
+                                        f"✅ Reached the end of @{u}'s following list ({total:,} sent).\n"
+                                        f"Send /following {u} to start over from the beginning."
+                                    ))
                                 return
 
                             asyncio.run(tb.send_users_page(page, "following", u, offset, total))
@@ -787,17 +839,26 @@ async def handle_telegram_commands():
                             add_log(f"Following @{u}: sent {new_offset:,}/{total:,}")
 
                             if new_offset >= total:
+                                next_cur = read_cursor("following", u)
                                 clear_cache("following", u)
-                                asyncio.run(tb.send_message(
-                                    f"✅ All {total:,} following of @{u} sent.\n\n"
-                                    f"▶️ Same account again: /following {u}\n"
-                                    f"▶️ Different account: /following otherusername\n"
-                                    f"▶️ Force fresh re-scrape: /rescrape_following {u}"
-                                ))
+                                if next_cur and next_cur != "0":
+                                    asyncio.run(tb.send_message(
+                                        f"📥 Sent {new_offset:,} following so far.\n"
+                                        f"▶️ Next 1,000 from @{u}: /following {u}\n"
+                                        f"▶️ Different account: /following otherusername\n"
+                                        f"▶️ Start over: /rescrape_following {u}"
+                                    ))
+                                else:
+                                    write_cursor("following", u, "-1")
+                                    asyncio.run(tb.send_message(
+                                        f"✅ Reached the end of @{u}'s following list ({new_offset:,} total sent).\n"
+                                        f"▶️ Start over from beginning: /following {u}\n"
+                                        f"▶️ Different account: /following otherusername"
+                                    ))
                             else:
                                 write_offset("following", u, new_offset)
                                 asyncio.run(tb.send_message(
-                                    f"📄 Sent {new_offset:,} of {total:,} — {total - new_offset:,} remaining.\n\n"
+                                    f"📄 Sent {new_offset:,} of {total:,} in this batch — {total - new_offset:,} remaining.\n\n"
                                     f"▶️ Next 500 from @{u}: /following {u}\n"
                                     f"▶️ Different account: /following otherusername"
                                 ))
