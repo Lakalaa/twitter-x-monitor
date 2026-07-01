@@ -497,10 +497,14 @@ async def handle_telegram_commands():
                         "/like <tweet_url> [count] — like with all accounts\n"
                         "/comment <tweet_url> [count] [@mention] <text> — comment with all accounts\n"
                         "/engage <tweet_url> [count] [@mention] <text> — like + comment with all accounts\n"
-                        "/cryptonews [filter] — crypto intelligence (all/staking/rewards/complaints/trending)\n"
-                        "/stakingnews — staking issues & validators\n"
+                        "/cryptonews [filter] — crypto intelligence digest\n"
+                        "/cryptoalerts — hacks & exploits\n"
+                        "/rugalerts — rug pulls & exit scams\n"
+                        "/yieldalerts — yield/DeFi issues, depegs, liquidations\n"
+                        "/memecoin — memecoin news & launches\n"
+                        "/stakingnews — staking & validator issues\n"
                         "/cryptorewards — airdrops & reward campaigns\n"
-                        "/cryptoalerts — hacks, scams & exploits\n"
+                        "/onchain — whale moves & on-chain signals\n"
                         "/check — run all scheduled checks now\n"
                         "/status — monitoring status\n"
                         "/help — full command reference\n\n"
@@ -578,11 +582,15 @@ async def handle_telegram_commands():
                         "── Other ──\n"
                         "/complaints topic — complaint tweets (last 7 days)\n"
                         "/cryptonews [filter] — crypto intelligence digest\n"
-                        "  Filters: all · staking · rewards · complaints · defi · trending\n"
-                        "  Example: /cryptonews staking\n\n"
+                        "  Filters: all · hack · rug · staking · yield · memecoin · defi · reward · onchain · trending\n"
+                        "  Example: /cryptonews yield\n\n"
+                        "/cryptoalerts — hacks, exploits & security incidents (from DeFiLlama + Reddit + news)\n"
+                        "/rugalerts — rug pulls, exit scams, honeypots\n"
+                        "/yieldalerts — DeFi yield issues, depegs, bad debt, liquidations\n"
+                        "/memecoin — memecoin news, new launches, degen calls\n"
                         "/stakingnews — staking issues, validator incidents, slashing\n"
                         "/cryptorewards — airdrops, reward campaigns, vesting unlocks\n"
-                        "/cryptoalerts — hacks, scams, exploits (priority only)\n\n"
+                        "/onchain — whale moves, dormant wallets, exchange flows\n\n"
                         "/check — run all scheduled checks now\n"
                         "/status — monitoring status + tracked accounts\n"
                         "/help — this message\n\n"
@@ -1887,24 +1895,18 @@ async def handle_telegram_commands():
 
                 # ── /cryptonews ─────────────────────────────────────────────
                 elif cmd in ("/cryptonews", "/crypto"):
-                    filter_map = {
-                        "all": None, "complaints": "complaint", "complaint": "complaint",
-                        "staking": "staking", "stake": "staking",
-                        "rewards": "reward", "reward": "reward", "airdrops": "reward",
-                        "defi": "defi", "trending": "trending",
-                    }
-                    cat = filter_map.get(args.lower().strip(), None) if args else None
                     label = args.strip() or "all"
                     await bot.send_message(chat_id=chat_id,
                         text=f"🔍 Fetching crypto intelligence ({label})… posting to group shortly.",
                         disable_web_page_preview=True)
-                    def _run_crypto(cat_=cat):
+                    def _run_crypto(cat_=label):
                         try:
                             import sys as _sys
                             _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
                             from crypto_monitor import build_digest as _bd
-                            chunks, count = _bd(category_filter=cat_, min_priority=1, max_items=20)
-                            add_log(f"Crypto news fetch: {count} items, {len(chunks)} message(s)")
+                            f = None if cat_ in ("all","") else cat_
+                            chunks, count = _bd(category_filter=f, min_priority=1, max_items=25)
+                            add_log(f"Crypto news fetch ({cat_}): {count} items, {len(chunks)} msg(s)")
                             for chunk in chunks:
                                 asyncio.run(tb.send_message(chunk, parse_mode="HTML",
                                             disable_web_page_preview=True))
@@ -1915,14 +1917,14 @@ async def handle_telegram_commands():
                 # ── /stakingnews ─────────────────────────────────────────────
                 elif cmd == "/stakingnews":
                     await bot.send_message(chat_id=chat_id,
-                        text="🥩 Fetching staking news and issues… posting to group.",
+                        text="🥩 Fetching staking issues & validator incidents… posting to group.",
                         disable_web_page_preview=True)
                     def _run_staking():
                         try:
                             import sys as _sys
                             _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
                             from crypto_monitor import build_digest as _bd
-                            chunks, count = _bd(category_filter="staking", min_priority=1, max_items=15)
+                            chunks, count = _bd(category_filter="staking", min_priority=1, max_items=20)
                             add_log(f"Staking news: {count} items")
                             for chunk in chunks:
                                 asyncio.run(tb.send_message(chunk, parse_mode="HTML",
@@ -1931,17 +1933,17 @@ async def handle_telegram_commands():
                             asyncio.run(tb.send_message(f"❌ Staking news error: {e}"))
                     threading.Thread(target=_run_staking, daemon=True).start()
 
-                # ── /cryptorewards ───────────────────────────────────────────
+                # ── /cryptorewards / /airdrops ───────────────────────────────
                 elif cmd in ("/cryptorewards", "/airdrops"):
                     await bot.send_message(chat_id=chat_id,
-                        text="🎁 Fetching crypto rewards and airdrops… posting to group.",
+                        text="🎁 Fetching crypto rewards, airdrops & campaigns… posting to group.",
                         disable_web_page_preview=True)
                     def _run_rewards():
                         try:
                             import sys as _sys
                             _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
                             from crypto_monitor import build_digest as _bd
-                            chunks, count = _bd(category_filter="reward", min_priority=1, max_items=15)
+                            chunks, count = _bd(category_filter="reward", min_priority=1, max_items=20)
                             add_log(f"Crypto rewards: {count} items")
                             for chunk in chunks:
                                 asyncio.run(tb.send_message(chunk, parse_mode="HTML",
@@ -1953,14 +1955,14 @@ async def handle_telegram_commands():
                 # ── /cryptoalerts ────────────────────────────────────────────
                 elif cmd == "/cryptoalerts":
                     await bot.send_message(chat_id=chat_id,
-                        text="🚨 Fetching urgent crypto alerts (hacks, scams, exploits)… posting to group.",
+                        text="🚨 Fetching hacks, exploits & scams (priority 2+)… posting to group.",
                         disable_web_page_preview=True)
                     def _run_alerts():
                         try:
                             import sys as _sys
                             _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
                             from crypto_monitor import build_digest as _bd
-                            chunks, count = _bd(category_filter="complaint", min_priority=2, max_items=15)
+                            chunks, count = _bd(category_filter="hack", min_priority=2, max_items=20)
                             add_log(f"Crypto alerts: {count} items")
                             for chunk in chunks:
                                 asyncio.run(tb.send_message(chunk, parse_mode="HTML",
@@ -1968,6 +1970,82 @@ async def handle_telegram_commands():
                         except Exception as e:
                             asyncio.run(tb.send_message(f"❌ Alerts fetch error: {e}"))
                     threading.Thread(target=_run_alerts, daemon=True).start()
+
+                # ── /memecoin ────────────────────────────────────────────────
+                elif cmd in ("/memecoin", "/memecoins"):
+                    await bot.send_message(chat_id=chat_id,
+                        text="🐸 Fetching memecoin news, launches & issues… posting to group.",
+                        disable_web_page_preview=True)
+                    def _run_meme():
+                        try:
+                            import sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                            from crypto_monitor import build_digest as _bd
+                            chunks, count = _bd(category_filter="memecoin", min_priority=1, max_items=20)
+                            add_log(f"Memecoin news: {count} items")
+                            for chunk in chunks:
+                                asyncio.run(tb.send_message(chunk, parse_mode="HTML",
+                                            disable_web_page_preview=True))
+                        except Exception as e:
+                            asyncio.run(tb.send_message(f"❌ Memecoin fetch error: {e}"))
+                    threading.Thread(target=_run_meme, daemon=True).start()
+
+                # ── /yieldalerts ─────────────────────────────────────────────
+                elif cmd in ("/yieldalerts", "/yield"):
+                    await bot.send_message(chat_id=chat_id,
+                        text="💰 Fetching yield & DeFi issues (depegs, liquidations, bad debt)… posting to group.",
+                        disable_web_page_preview=True)
+                    def _run_yield():
+                        try:
+                            import sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                            from crypto_monitor import build_digest as _bd
+                            chunks, count = _bd(category_filter="yield", min_priority=1, max_items=20)
+                            add_log(f"Yield alerts: {count} items")
+                            for chunk in chunks:
+                                asyncio.run(tb.send_message(chunk, parse_mode="HTML",
+                                            disable_web_page_preview=True))
+                        except Exception as e:
+                            asyncio.run(tb.send_message(f"❌ Yield alerts error: {e}"))
+                    threading.Thread(target=_run_yield, daemon=True).start()
+
+                # ── /rugalerts ───────────────────────────────────────────────
+                elif cmd in ("/rugalerts", "/rugs"):
+                    await bot.send_message(chat_id=chat_id,
+                        text="💀 Fetching rug pulls & exit scams… posting to group.",
+                        disable_web_page_preview=True)
+                    def _run_rugs():
+                        try:
+                            import sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                            from crypto_monitor import build_digest as _bd
+                            chunks, count = _bd(category_filter="rug", min_priority=1, max_items=20)
+                            add_log(f"Rug alerts: {count} items")
+                            for chunk in chunks:
+                                asyncio.run(tb.send_message(chunk, parse_mode="HTML",
+                                            disable_web_page_preview=True))
+                        except Exception as e:
+                            asyncio.run(tb.send_message(f"❌ Rug alerts error: {e}"))
+                    threading.Thread(target=_run_rugs, daemon=True).start()
+
+                # ── /onchain ─────────────────────────────────────────────────
+                elif cmd in ("/onchain", "/whale"):
+                    await bot.send_message(chat_id=chat_id,
+                        text="🔗 Fetching on-chain signals & whale moves… posting to group.",
+                        disable_web_page_preview=True)
+                    def _run_onchain():
+                        try:
+                            import sys as _sys
+                            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                            from crypto_monitor import build_digest as _bd
+                            chunks, count = _bd(category_filter="onchain", min_priority=1, max_items=20)
+                            add_log(f"On-chain signals: {count} items")
+                            for chunk in chunks:
+                                asyncio.run(tb.send_message(chunk, parse_mode="HTML",
+                                            disable_web_page_preview=True))
+                        except Exception as e:
+                            asyncio.run(tb.send_message(f"❌ On-chain fetch error: {e}"))
+                    threading.Thread(target=_run_onchain, daemon=True).start()
 
         except Exception as e:
             add_log(f"Telegram poll error: {e}")
