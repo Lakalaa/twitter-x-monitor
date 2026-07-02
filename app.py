@@ -487,6 +487,107 @@ def run_crypto_check_sync():
         add_log(f"Auto crypto check error: {e}")
 
 
+# ─── Auto Twitter Feed Monitor ────────────────────────────────────────────────
+
+def _feed_since_path() -> str:
+    return os.path.join(_cache_dir(), "feed_since_ids.json")
+
+
+def _load_feed_since() -> dict:
+    p = _feed_since_path()
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_feed_since(data: dict):
+    with open(_feed_since_path(), "w") as f:
+        json.dump(data, f)
+
+
+def _feed_seen_path() -> str:
+    return os.path.join(_cache_dir(), "feed_seen_ids.json")
+
+
+def _load_feed_seen() -> set:
+    p = _feed_seen_path()
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                return set(json.load(f))
+        except Exception:
+            pass
+    return set()
+
+
+def _save_feed_seen(seen: set):
+    items = list(seen)[-5000:]
+    with open(_feed_seen_path(), "w") as f:
+        json.dump(items, f)
+
+
+def run_feed_check_sync():
+    """
+    Fetch new tweets from monitored X accounts, classify them, and
+    post announcements, admin messages, links, complaints, and user
+    issues straight to the Telegram group. Runs every 30 minutes.
+    """
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        import tools.telegram_bot as tb
+        from twitter_feed_monitor import fetch_feed, format_tweet_for_telegram
+        from twitter_post import get_auth_from_config as _gac
+
+        config    = load_config()
+        usernames = config.get("monitor_feeds", [])
+        if not usernames:
+            return  # nothing configured
+
+        auth_token, ct0 = _gac()
+        if not auth_token:
+            add_log("Feed monitor: no auth_token — skipping")
+            return
+
+        since_ids = _load_feed_since()
+        seen_ids  = _load_feed_seen()
+
+        add_log(f"Feed monitor: checking {len(usernames)} account(s)…")
+        result = fetch_feed(
+            usernames, auth_token, ct0,
+            since_ids=since_ids,
+            min_priority=2,
+            include_replies=True,
+        )
+
+        items = result.get("items", [])
+        new_since_ids = result.get("new_since_ids", {})
+
+        # Filter out already-seen tweet IDs
+        new_items = [it for it in items if it.get("tweet_id") not in seen_ids]
+        add_log(f"Feed monitor: {len(items)} fetched, {len(new_items)} new")
+
+        for it in new_items[:40]:
+            try:
+                msg = format_tweet_for_telegram(it)
+                asyncio.run(tb.send_message(msg, parse_mode="HTML",
+                                            disable_web_page_preview=False))
+                seen_ids.add(it.get("tweet_id", ""))
+                time.sleep(1)
+            except Exception as e:
+                add_log(f"Feed post error: {e}")
+
+        _save_feed_since(new_since_ids)
+        _save_feed_seen(seen_ids)
+
+    except Exception as e:
+        add_log(f"Feed monitor error: {e}")
+
+
 # ─── Background scheduler ─────────────────────────────────────────────────────
 
 def _keepalive_ping():
@@ -510,9 +611,11 @@ def start_scheduler():
     schedule.every(interval).minutes.do(run_checks_sync)
     schedule.every(10).minutes.do(_keepalive_ping)
     schedule.every(2).hours.do(run_crypto_check_sync)
-    # Run once immediately on startup so group gets news right away
+    schedule.every(30).minutes.do(run_feed_check_sync)
+    # Run once immediately on startup
     threading.Thread(target=run_crypto_check_sync, daemon=True).start()
-    add_log(f"Scheduler started — Twitter every {interval} min, Crypto every 2 hours")
+    threading.Thread(target=run_feed_check_sync, daemon=True).start()
+    add_log(f"Scheduler started — Twitter every {interval} min, Crypto every 2h, Feed every 30 min")
     while STATE["running"]:
         schedule.run_pending()
         time.sleep(15)
@@ -658,6 +761,10 @@ async def handle_telegram_commands():
                         "/stakingnews — staking & validator issues\n"
                         "/cryptorewards — airdrops & reward campaigns\n"
                         "/onchain — whale moves & on-chain signals\n"
+                        "/addfeed username — watch an X account (auto-posts to group)\n"
+                        "/removefeed username — stop watching an account\n"
+                        "/feeds — list monitored accounts\n"
+                        "/checkfeed — run feed check now\n"
                         "/check — run all scheduled checks now\n"
                         "/status — monitoring status\n"
                         "/help — full command reference\n\n"
@@ -744,6 +851,14 @@ async def handle_telegram_commands():
                         "/stakingnews — staking issues, validator incidents, slashing\n"
                         "/cryptorewards — airdrops, reward campaigns, vesting unlocks\n"
                         "/onchain — whale moves, dormant wallets, exchange flows\n\n"
+                        "── X Account Feed Monitor ──\n"
+                        "/addfeed username — add an X account to auto-monitor\n"
+                        "  Posts announcements, admin links, complaints & user issues automatically\n"
+                        "  Checks every 30 minutes — no commands needed after setup\n"
+                        "  Example: /addfeed pumpfun\n\n"
+                        "/removefeed username — stop monitoring an account\n"
+                        "/feeds — list all monitored accounts\n"
+                        "/checkfeed — trigger an immediate feed check now\n\n"
                         "/check — run all scheduled checks now\n"
                         "/status — monitoring status + tracked accounts\n"
                         "/help — this message\n\n"
@@ -2199,6 +2314,77 @@ async def handle_telegram_commands():
                         except Exception as e:
                             asyncio.run(tb.send_message(f"❌ On-chain fetch error: {e}"))
                     threading.Thread(target=_run_onchain, daemon=True).start()
+
+                # ── /addfeed ─────────────────────────────────────────────────
+                elif cmd == "/addfeed":
+                    if not args:
+                        await bot.send_message(chat_id=chat_id,
+                            text="Usage: /addfeed username\nExample: /addfeed pumpfun\nAdds an X account to the auto-feed monitor.")
+                    else:
+                        uname_f = args.strip().lstrip("@").lower()
+                        cfg = load_config()
+                        feeds = cfg.get("monitor_feeds", [])
+                        if uname_f in [f.lower() for f in feeds]:
+                            await bot.send_message(chat_id=chat_id,
+                                text=f"ℹ️ @{uname_f} is already in the feed monitor.")
+                        else:
+                            feeds.append(uname_f)
+                            cfg["monitor_feeds"] = feeds
+                            save_config(cfg)
+                            await bot.send_message(chat_id=chat_id,
+                                text=f"✅ Added @{uname_f} to feed monitor.\n"
+                                     f"Now watching {len(feeds)} account(s).\n"
+                                     f"Announcements, admin links, complaints & user issues will be posted automatically.")
+                            add_log(f"Feed monitor: added @{uname_f} (total {len(feeds)})")
+
+                # ── /removefeed ──────────────────────────────────────────────
+                elif cmd == "/removefeed":
+                    if not args:
+                        await bot.send_message(chat_id=chat_id,
+                            text="Usage: /removefeed username\nExample: /removefeed pumpfun")
+                    else:
+                        uname_f = args.strip().lstrip("@").lower()
+                        cfg = load_config()
+                        feeds = cfg.get("monitor_feeds", [])
+                        new_feeds = [f for f in feeds if f.lower() != uname_f]
+                        if len(new_feeds) == len(feeds):
+                            await bot.send_message(chat_id=chat_id,
+                                text=f"ℹ️ @{uname_f} was not in the feed monitor.")
+                        else:
+                            cfg["monitor_feeds"] = new_feeds
+                            save_config(cfg)
+                            await bot.send_message(chat_id=chat_id,
+                                text=f"✅ Removed @{uname_f} from feed monitor.\n"
+                                     f"Now watching {len(new_feeds)} account(s).")
+                            add_log(f"Feed monitor: removed @{uname_f} (total {len(new_feeds)})")
+
+                # ── /feeds ───────────────────────────────────────────────────
+                elif cmd == "/feeds":
+                    cfg = load_config()
+                    feeds = cfg.get("monitor_feeds", [])
+                    if not feeds:
+                        await bot.send_message(chat_id=chat_id,
+                            text="📭 No X accounts in feed monitor yet.\n"
+                                 "Add one with: /addfeed username")
+                    else:
+                        lines = "\n".join(f"  • @{f}" for f in feeds)
+                        await bot.send_message(chat_id=chat_id,
+                            text=f"📡 Feed monitor — watching {len(feeds)} account(s):\n{lines}\n\n"
+                                 f"Posts every 30 min — announces, links, complaints & user issues only.\n"
+                                 f"Add: /addfeed username\nRemove: /removefeed username")
+
+                # ── /checkfeed ───────────────────────────────────────────────
+                elif cmd == "/checkfeed":
+                    cfg = load_config()
+                    feeds = cfg.get("monitor_feeds", [])
+                    if not feeds:
+                        await bot.send_message(chat_id=chat_id,
+                            text="📭 No accounts in feed monitor. Add with /addfeed username")
+                    else:
+                        await bot.send_message(chat_id=chat_id,
+                            text=f"🔍 Running feed check for {len(feeds)} account(s)… posting to group.",
+                            disable_web_page_preview=True)
+                        threading.Thread(target=run_feed_check_sync, daemon=True).start()
 
         except Exception as e:
             add_log(f"Telegram poll error: {e}")
