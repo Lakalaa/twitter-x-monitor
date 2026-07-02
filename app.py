@@ -337,6 +337,156 @@ def run_checks_sync(triggered_by="schedule"):
     asyncio.run(run_all_checks(triggered_by))
 
 
+# ─── Auto Crypto Monitor ───────────────────────────────────────────────────────
+
+def _crypto_seen_path() -> str:
+    d = _cache_dir()
+    return os.path.join(d, "crypto_seen.json")
+
+
+def _load_crypto_seen() -> set:
+    p = _crypto_seen_path()
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                data = json.load(f)
+                return set(data) if isinstance(data, list) else set()
+        except Exception:
+            pass
+    return set()
+
+
+def _save_crypto_seen(seen: set):
+    # Keep max 2000 slugs so file never grows huge
+    items = list(seen)[-2000:]
+    with open(_crypto_seen_path(), "w") as f:
+        json.dump(items, f)
+
+
+def _slug(title: str) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9]", "", title.lower())[:80]
+
+
+def _fmt_auto_post(item: dict) -> str:
+    """Format a single crypto item as a standalone Telegram HTML message."""
+    cat      = item.get("category", "general")
+    priority = item.get("priority", 1)
+    tokens   = item.get("tokens", [])
+    title    = item.get("title", "")
+    url      = item.get("url", "")
+    source   = item.get("source", "")
+    date     = item.get("date", "")
+
+    _CAT_EMOJI = {
+        "hack":    "🚨 HACK / EXPLOIT",
+        "rug":     "💀 RUG PULL / SCAM",
+        "staking": "🥩 STAKING ISSUE",
+        "yield":   "💰 YIELD / DeFi ISSUE",
+        "memecoin":"🐸 MEMECOIN",
+        "defi":    "⚗️ DeFi",
+        "reward":  "🎁 REWARD / AIRDROP",
+        "onchain": "🔗 ON-CHAIN SIGNAL",
+        "trending":"🔥 TRENDING",
+        "general": "📰 CRYPTO NEWS",
+    }
+    _PRIORITY_ICON = {1: "▪️", 2: "🔵", 3: "🟡", 4: "🟠", 5: "🔴"}
+
+    header = _CAT_EMOJI.get(cat, "📰 CRYPTO NEWS")
+    pri    = _PRIORITY_ICON.get(priority, "▪️")
+
+    def esc(s):
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Coin names line
+    coin_line = ""
+    if tokens:
+        coin_line = "💎 <b>" + "  ".join(f"${t}" for t in tokens[:6]) + "</b>\n"
+
+    # Title with link
+    title_html = f'<a href="{url}">{esc(title[:200])}</a>' if url else esc(title[:200])
+
+    return (
+        f"{pri} <b>{header}</b>\n"
+        f"{coin_line}"
+        f"{title_html}\n"
+        f"<i>📡 {esc(source)} · {date}</i>"
+    )
+
+
+def run_crypto_check_sync():
+    """
+    Fetch latest crypto items, post only NEW ones to the Telegram group.
+    Runs every 2 hours from the scheduler.
+    """
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        import tools.telegram_bot as tb
+        from crypto_monitor import fetch_all
+
+        add_log("Auto crypto check starting…")
+        data = fetch_all(min_priority=2)   # only priority 2+ for auto-posts (avoid noise)
+        items = data.get("items", [])
+        fg    = data.get("fear_greed")
+
+        seen = _load_crypto_seen()
+        new_items = []
+        for it in items:
+            s = _slug(it.get("title", ""))
+            if s and s not in seen:
+                new_items.append(it)
+                seen.add(s)
+
+        add_log(f"Auto crypto check: {len(items)} fetched, {len(new_items)} new")
+
+        if not new_items:
+            return  # nothing new, stay silent
+
+        # Post a short header
+        today = __import__('datetime').datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        fg_line = ""
+        if fg:
+            v = fg["value"]
+            bar = "🟢" if v >= 60 else ("🟡" if v >= 40 else "🔴")
+            fg_line = f"\n{bar} Fear &amp; Greed: <b>{v}/100</b> — {fg['label']}"
+
+        asyncio.run(tb.send_message(
+            f"📡 <b>Crypto Intelligence Update</b> — {len(new_items)} new items{fg_line}\n"
+            f"🕐 {today}",
+            parse_mode="HTML", disable_web_page_preview=True
+        ))
+
+        # Post each new item individually (max 30 per run to avoid spam)
+        for it in new_items[:30]:
+            try:
+                msg = _fmt_auto_post(it)
+                asyncio.run(tb.send_message(msg, parse_mode="HTML",
+                                            disable_web_page_preview=True))
+                time.sleep(1)   # small pause between messages
+            except Exception as e:
+                add_log(f"Auto crypto post error: {e}")
+
+        # Also post trending tokens summary if any
+        trending = [it for it in new_items if it.get("category") == "trending"]
+        if trending:
+            tok_list = []
+            for it in trending:
+                tok_list += it.get("tokens", [])
+            unique_toks = list(dict.fromkeys(tok_list))  # preserve order, dedupe
+            if unique_toks:
+                asyncio.run(tb.send_message(
+                    "🔥 <b>Trending Tokens Right Now</b>\n" +
+                    "\n".join(f"  • <b>${t}</b>" for t in unique_toks[:10]),
+                    parse_mode="HTML", disable_web_page_preview=True
+                ))
+
+        _save_crypto_seen(seen)
+
+    except Exception as e:
+        add_log(f"Auto crypto check error: {e}")
+
+
 # ─── Background scheduler ─────────────────────────────────────────────────────
 
 def _keepalive_ping():
@@ -359,7 +509,10 @@ def start_scheduler():
     schedule.clear()
     schedule.every(interval).minutes.do(run_checks_sync)
     schedule.every(10).minutes.do(_keepalive_ping)
-    add_log(f"Scheduler started — every {interval} minutes")
+    schedule.every(2).hours.do(run_crypto_check_sync)
+    # Run once immediately on startup so group gets news right away
+    threading.Thread(target=run_crypto_check_sync, daemon=True).start()
+    add_log(f"Scheduler started — Twitter every {interval} min, Crypto every 2 hours")
     while STATE["running"]:
         schedule.run_pending()
         time.sleep(15)
