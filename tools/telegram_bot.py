@@ -85,11 +85,14 @@ def find_new_users(current_users: list, target_account: str, list_type: str) -> 
 
 # ─── Send messages ─────────────────────────────────────────────────────────────
 
-async def send_message(text: str):
+async def send_message(text: str, parse_mode: str = None, disable_web_page_preview: bool = True):
     bot = get_bot()
     chat_id = get_chat_id()
     try:
-        await bot.send_message(chat_id=chat_id, text=text, disable_web_page_preview=True)
+        kwargs = {"chat_id": chat_id, "text": text, "disable_web_page_preview": disable_web_page_preview}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        await bot.send_message(**kwargs)
     except TelegramError as e:
         print(f"  ✗ Telegram error: {e}")
 
