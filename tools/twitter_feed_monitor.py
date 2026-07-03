@@ -7,14 +7,12 @@ Watches specific X/Twitter account timelines and classifies tweets as:
   - admin         : pinned/important admin messages
   - general       : regular tweet (filtered out by default)
 
-Uses Twitter v1.1 statuses/user_timeline — no extra libraries needed.
+Uses the Scweet GraphQL client (same engine the dashboard's follower/following
+scraping uses) — the old Twitter v1.1 REST endpoints (statuses/user_timeline,
+search/tweets) were shut down by X and always return 404.
 """
 from __future__ import annotations
-import json
-import os
 import re
-import urllib.request
-import urllib.error
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -69,14 +67,13 @@ def _score(text: str, keywords: list[str]) -> int:
 
 def classify_tweet(text: str, is_reply: bool = False,
                    is_retweet: bool = False) -> dict:
-    """Return {category, priority, is_reply, is_retweet}."""
+    """Return {category, priority}."""
     ann   = _score(text, _ANNOUNCE_KW)
     link  = _score(text, _LINK_KW)
     comp  = _score(text, _COMPLAINT_KW)
     admin = _score(text, _ADMIN_KW)
     user_issue = _score(text, _USER_ISSUE_KW)
 
-    # Replies FROM users to the account are flagged as user issues
     if is_reply and user_issue >= 1:
         return {"category": "user_issue", "priority": 3}
 
@@ -94,9 +91,6 @@ def classify_tweet(text: str, is_reply: bool = False,
     if admin >= 1:
         return {"category": "admin", "priority": 3}
 
-    if link >= 2:
-        return {"category": "link", "priority": 2}
-
     if link >= 1:
         return {"category": "link", "priority": 2}
 
@@ -113,180 +107,116 @@ def _has_url(text: str) -> bool:
     return bool(re.search(r'https?://', text))
 
 
-# ── Twitter v1.1 API fetch ───────────────────────────────────────────────────
-
-_BASE = "https://api.twitter.com/1.1"
-
-
-def _headers(auth_token: str, ct0: str) -> dict:
-    return {
-        "Authorization": f"Bearer {_bearer_from_env()}",
-        "Cookie": f"auth_token={auth_token}; ct0={ct0}",
-        "x-csrf-token": ct0,
-        "User-Agent": "Mozilla/5.0",
-        "Content-Type": "application/json",
-        "x-twitter-auth-type": "OAuth2Session",
-        "x-twitter-client-language": "en",
-        "x-twitter-active-user": "yes",
-    }
-
-
-def _bearer_from_env() -> str:
-    return os.environ.get(
-        "TWITTER_BEARER",
-        "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs"
-        "%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
-    )
-
-
-def _fetch_timeline(username: str, auth_token: str, ct0: str,
-                    count: int = 30, since_id: Optional[str] = None) -> list[dict]:
-    """Fetch recent tweets from a user's timeline via v1.1 API."""
-    params = (
-        f"screen_name={username}&count={count}&tweet_mode=extended"
-        f"&include_rts=true&exclude_replies=false"
-    )
-    if since_id:
-        params += f"&since_id={since_id}"
-
-    url = f"{_BASE}/statuses/user_timeline.json?{params}"
-    hdrs = _headers(auth_token, ct0)
-
-    try:
-        req = urllib.request.Request(url, headers=hdrs)
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as e:
-        body = e.read()[:300]
-        print(f"[feed] HTTP {e.code} for @{username}: {body}")
-        return []
-    except Exception as e:
-        print(f"[feed] Error fetching @{username}: {e}")
-        return []
-
-
-def _fetch_replies_to(username: str, auth_token: str, ct0: str,
-                      count: int = 20) -> list[dict]:
-    """Search for recent replies directed AT an account (user issues/complaints)."""
-    query = f"to:{username}"
-    params = (
-        f"q={urllib.request.pathname2url(query)}&count={count}"
-        f"&tweet_mode=extended&result_type=recent"
-    )
-    url = f"{_BASE}/search/tweets.json?{params}"
-    hdrs = _headers(auth_token, ct0)
-
-    try:
-        req = urllib.request.Request(url, headers=hdrs)
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read().decode("utf-8", errors="replace"))
-            return data.get("statuses", [])
-    except Exception as e:
-        print(f"[feed] Error fetching replies to @{username}: {e}")
-        return []
-
+# ── Tweet dict field helpers (Scweet schema) ────────────────────────────────
 
 def _tweet_text(tw: dict) -> str:
-    """Extract full text (handles retweets and extended tweets)."""
-    rt = tw.get("retweeted_status")
-    if rt:
-        return rt.get("full_text") or rt.get("text", "")
-    return tw.get("full_text") or tw.get("text", "")
+    return tw.get("text") or tw.get("rawContent", "") or ""
+
+
+def _tweet_id(tw: dict) -> str:
+    return str(tw.get("id") or tw.get("tweet_id") or tw.get("id_str") or "")
 
 
 def _tweet_url(tw: dict) -> str:
-    uid  = tw.get("user", {}).get("screen_name", "")
-    tid  = tw.get("id_str", "")
-    return f"https://twitter.com/{uid}/status/{tid}" if uid and tid else ""
+    return tw.get("tweet_url") or tw.get("url") or ""
 
 
-def _parse_date(tw: dict) -> str:
-    created = tw.get("created_at", "")
-    try:
-        dt = datetime.strptime(created, "%a %b %d %H:%M:%S +0000 %Y")
-        return dt.strftime("%Y-%m-%d %H:%M UTC")
-    except Exception:
-        return created[:10] if created else ""
+def _tweet_date(tw: dict) -> str:
+    ts = tw.get("timestamp") or tw.get("date") or tw.get("created_at") or ""
+    return str(ts)[:19].replace("T", " ") if ts else ""
 
 
-# ── Main feed fetch function ─────────────────────────────────────────────────
+def _tweet_user(tw: dict) -> str:
+    u = tw.get("user", {}) or {}
+    return u.get("screen_name") or tw.get("username", "") or ""
 
-def fetch_feed(
+
+def _tweet_likes(tw: dict) -> int:
+    return tw.get("likes", tw.get("likeCount", 0)) or 0
+
+
+def _tweet_retweets(tw: dict) -> int:
+    return tw.get("retweets", tw.get("retweetCount", 0)) or 0
+
+
+def _tweet_is_reply(tw: dict) -> bool:
+    return bool(tw.get("in_reply_to_screen_name") or tw.get("is_reply"))
+
+
+# ── Main async fetch (uses a Scweet client instance) ────────────────────────
+
+async def afetch_feed(
+    scraper,
     usernames: list[str],
-    auth_token: str,
-    ct0: str,
     since_ids: Optional[dict] = None,
     min_priority: int = 2,
     include_replies: bool = True,
 ) -> dict:
     """
-    Fetch and classify tweets from multiple accounts.
-    since_ids: {username: last_seen_tweet_id} for incremental fetching.
-    Returns {
-        "items": [...classified tweets...],
-        "new_since_ids": {username: latest_id},
-        "fetched_at": "..."
-    }
+    Fetch and classify recent tweets from multiple accounts using an
+    already-constructed Scweet client (scraper). since_ids is currently
+    unused for de-dup (handled by caller via seen tweet-id cache) but kept
+    for interface compatibility.
+    Returns {"items": [...], "fetched_at": "..."}
     """
     since_ids = since_ids or {}
     items: list[dict] = []
-    new_since_ids: dict = dict(since_ids)
 
-    for username in usernames:
-        since_id = since_ids.get(username.lower())
-        tweets = _fetch_timeline(username, auth_token, ct0, count=30,
-                                 since_id=since_id)
+    try:
+        tweets = await scraper.aget_profile_tweets(usernames, limit=15, save=False)
+    except Exception as e:
+        print(f"[feed] Error fetching timelines for {usernames}: {e}")
+        tweets = []
 
-        if tweets:
-            latest_id = tweets[0].get("id_str")
-            if latest_id:
-                new_since_ids[username.lower()] = latest_id
+    for tw in tweets:
+        text     = _tweet_text(tw)
+        is_reply = _tweet_is_reply(tw)
+        account  = _tweet_user(tw)
+        clf      = classify_tweet(text, is_reply=is_reply)
 
-        for tw in tweets:
-            text     = _tweet_text(tw)
-            is_rt    = bool(tw.get("retweeted_status"))
-            is_reply = bool(tw.get("in_reply_to_screen_name"))
-            clf      = classify_tweet(text, is_reply=is_reply, is_retweet=is_rt)
+        if clf["priority"] < min_priority:
+            continue
 
-            if clf["priority"] < min_priority:
-                continue
+        items.append({
+            "account":   account,
+            "tweet_id":  _tweet_id(tw),
+            "text":      text[:500],
+            "url":       _tweet_url(tw),
+            "date":      _tweet_date(tw),
+            "is_reply":  is_reply,
+            "is_rt":     False,
+            "likes":     _tweet_likes(tw),
+            "retweets":  _tweet_retweets(tw),
+            "has_url":   _has_url(text),
+            **clf,
+        })
 
-            items.append({
-                "account":   username,
-                "tweet_id":  tw.get("id_str", ""),
-                "text":      text[:500],
-                "url":       _tweet_url(tw),
-                "date":      _parse_date(tw),
-                "is_reply":  is_reply,
-                "is_rt":     is_rt,
-                "likes":     tw.get("favorite_count", 0),
-                "retweets":  tw.get("retweet_count", 0),
-                "has_url":   _has_url(text),
-                **clf,
-            })
-
-        # Also fetch user replies directed AT this account
-        if include_replies:
-            replies = _fetch_replies_to(username, auth_token, ct0, count=15)
+    if include_replies:
+        for username in usernames:
+            try:
+                replies = await scraper.asearch(to_users=[username], limit=15, save=False)
+            except Exception as e:
+                print(f"[feed] Error fetching replies to @{username}: {e}")
+                replies = []
             for tw in replies:
-                sender = tw.get("user", {}).get("screen_name", "")
+                sender = _tweet_user(tw)
                 if sender.lower() == username.lower():
-                    continue  # skip the account's own tweets
-                text  = _tweet_text(tw)
-                clf   = classify_tweet(text, is_reply=True)
+                    continue
+                text = _tweet_text(tw)
+                clf  = classify_tweet(text, is_reply=True)
                 if clf["priority"] < min_priority:
                     continue
                 items.append({
                     "account":   username,
                     "from_user": sender,
-                    "tweet_id":  tw.get("id_str", ""),
+                    "tweet_id":  _tweet_id(tw),
                     "text":      text[:400],
                     "url":       _tweet_url(tw),
-                    "date":      _parse_date(tw),
+                    "date":      _tweet_date(tw),
                     "is_reply":  True,
                     "is_rt":     False,
-                    "likes":     tw.get("favorite_count", 0),
-                    "retweets":  tw.get("retweet_count", 0),
+                    "likes":     _tweet_likes(tw),
+                    "retweets":  _tweet_retweets(tw),
                     "has_url":   _has_url(text),
                     **clf,
                 })
@@ -300,14 +230,18 @@ def fetch_feed(
             seen_ids.add(tid)
             unique.append(it)
 
-    # Sort: priority desc, then date desc
     unique.sort(key=lambda x: (x["priority"], x["date"]), reverse=True)
 
     return {
         "items": unique,
-        "new_since_ids": new_since_ids,
         "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     }
+
+
+def fetch_feed(scraper, usernames: list[str], **kwargs) -> dict:
+    """Sync wrapper — only call this from a context with NO running event loop."""
+    import asyncio
+    return asyncio.run(afetch_feed(scraper, usernames, **kwargs))
 
 
 # ── Telegram formatter ───────────────────────────────────────────────────────
@@ -342,18 +276,15 @@ def format_tweet_for_telegram(item: dict) -> str:
     def esc(s: str) -> str:
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    # Who posted
     if from_u:
         who = f'👤 <a href="https://twitter.com/{from_u}">@{esc(from_u)}</a> → <a href="https://twitter.com/{account}">@{esc(account)}</a>'
     else:
         who = f'<a href="https://twitter.com/{account}">@{esc(account)}</a>'
 
-    # Stats
     stats = ""
     if likes or rts:
         stats = f"❤️ {likes:,}  🔁 {rts:,}"
 
-    # Build message
     lines = [
         f"{pri} <b>{header}</b>",
         who,
