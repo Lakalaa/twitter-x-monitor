@@ -667,14 +667,15 @@ def start_scheduler():
     schedule.clear()
     schedule.every(interval).minutes.do(run_checks_sync)
     schedule.every(10).minutes.do(_keepalive_ping)
-    schedule.every(2).hours.do(run_crypto_check_sync)
+    # NOTE: auto crypto-news check (CoinDesk/Reddit/CryptoPanic/CoinGecko) is
+    # intentionally NOT scheduled — user wants Telegram alerts sourced only
+    # from live X/Twitter activity, not third-party news aggregators.
     schedule.every(30).minutes.do(run_feed_check_sync)
     schedule.every(45).minutes.do(run_xissues_check_sync)
     # Run once immediately on startup
-    threading.Thread(target=run_crypto_check_sync, daemon=True).start()
     threading.Thread(target=run_feed_check_sync, daemon=True).start()
     threading.Thread(target=run_xissues_check_sync, daemon=True).start()
-    add_log(f"Scheduler started — Twitter every {interval} min, Crypto every 2h, Feed every 30 min, X-issues every 45 min")
+    add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 45 min (crypto-news auto-post disabled)")
     while STATE["running"]:
         schedule.run_pending()
         time.sleep(15)
