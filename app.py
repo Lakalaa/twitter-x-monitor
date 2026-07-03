@@ -588,6 +588,69 @@ def run_feed_check_sync():
         add_log(f"Feed monitor error: {e}")
 
 
+# ─── Auto X-wide Issue Monitor (staking / yield / AI / trending) ──────────────
+
+def _xissues_seen_path() -> str:
+    return os.path.join(_cache_dir(), "xissues_seen_ids.json")
+
+
+def _load_xissues_seen() -> set:
+    p = _xissues_seen_path()
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                return set(json.load(f))
+        except Exception:
+            pass
+    return set()
+
+
+def _save_xissues_seen(seen: set):
+    items = list(seen)[-5000:]
+    with open(_xissues_seen_path(), "w") as f:
+        json.dump(items, f)
+
+
+def run_xissues_check_sync():
+    """
+    Search X broadly (not tied to any specific account) for trending issue
+    chatter: staking problems, yield/reward issues, AI token/agent issues,
+    and general trending crypto issues. Only posts tweets that mention an
+    actual token name ($TICKER). Runs every 45 minutes.
+    """
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        import tools.telegram_bot as tb
+        from x_issues_monitor import fetch_issues, format_issue_for_telegram
+        from twitter_post import get_auth_from_config as _gac
+
+        auth_token, ct0 = _gac()
+        if not auth_token:
+            add_log("X issues monitor: no auth_token — skipping")
+            return
+
+        seen_ids = _load_xissues_seen()
+        add_log("X issues monitor: searching staking/yield/AI/trending…")
+        items = fetch_issues(auth_token, ct0, seen_ids=seen_ids)
+        add_log(f"X issues monitor: {len(items)} new token-tagged issue(s)")
+
+        for it in items[:20]:
+            try:
+                msg = format_issue_for_telegram(it)
+                asyncio.run(tb.send_message(msg, parse_mode="HTML",
+                                            disable_web_page_preview=False))
+                seen_ids.add(it.get("tweet_id", ""))
+                time.sleep(1)
+            except Exception as e:
+                add_log(f"X issues post error: {e}")
+
+        _save_xissues_seen(seen_ids)
+
+    except Exception as e:
+        add_log(f"X issues monitor error: {e}")
+
+
 # ─── Background scheduler ─────────────────────────────────────────────────────
 
 def _keepalive_ping():
@@ -612,10 +675,12 @@ def start_scheduler():
     schedule.every(10).minutes.do(_keepalive_ping)
     schedule.every(2).hours.do(run_crypto_check_sync)
     schedule.every(30).minutes.do(run_feed_check_sync)
+    schedule.every(45).minutes.do(run_xissues_check_sync)
     # Run once immediately on startup
     threading.Thread(target=run_crypto_check_sync, daemon=True).start()
     threading.Thread(target=run_feed_check_sync, daemon=True).start()
-    add_log(f"Scheduler started — Twitter every {interval} min, Crypto every 2h, Feed every 30 min")
+    threading.Thread(target=run_xissues_check_sync, daemon=True).start()
+    add_log(f"Scheduler started — Twitter every {interval} min, Crypto every 2h, Feed every 30 min, X-issues every 45 min")
     while STATE["running"]:
         schedule.run_pending()
         time.sleep(15)
@@ -765,6 +830,7 @@ async def handle_telegram_commands():
                         "/removefeed username — stop watching an account\n"
                         "/feeds — list monitored accounts\n"
                         "/checkfeed — run feed check now\n"
+                        "/xissues — search X for staking/yield/AI/trending issues (token-tagged)\n"
                         "/check — run all scheduled checks now\n"
                         "/status — monitoring status\n"
                         "/help — full command reference\n\n"
@@ -859,6 +925,11 @@ async def handle_telegram_commands():
                         "/removefeed username — stop monitoring an account\n"
                         "/feeds — list all monitored accounts\n"
                         "/checkfeed — trigger an immediate feed check now\n\n"
+                        "── X-wide Issue Search (staking/yield/AI/trending) ──\n"
+                        "/xissues — search all of X (not tied to any account) for:\n"
+                        "  🥩 staking issues · 💰 yield/reward issues · 🤖 AI token issues · 🔥 trending crypto issues\n"
+                        "  Only shows tweets that mention an actual token ($TICKER)\n"
+                        "  Runs automatically every 45 minutes — no command needed\n\n"
                         "/check — run all scheduled checks now\n"
                         "/status — monitoring status + tracked accounts\n"
                         "/help — this message\n\n"
@@ -2385,6 +2456,13 @@ async def handle_telegram_commands():
                             text=f"🔍 Running feed check for {len(feeds)} account(s)… posting to group.",
                             disable_web_page_preview=True)
                         threading.Thread(target=run_feed_check_sync, daemon=True).start()
+
+                # ── /xissues ─────────────────────────────────────────────────
+                elif cmd == "/xissues":
+                    await bot.send_message(chat_id=chat_id,
+                        text="🔍 Searching X for staking/yield/AI/trending issues (with token names)… posting to group.",
+                        disable_web_page_preview=True)
+                    threading.Thread(target=run_xissues_check_sync, daemon=True).start()
 
         except Exception as e:
             add_log(f"Telegram poll error: {e}")
