@@ -284,8 +284,8 @@ async def run_all_checks(triggered_by: str = "schedule"):
     for username in both:
         add_log(f"Fetching followers + following of @{username} for analysis…")
         try:
-            followers = s.get_followers([username], limit=None, save=True, resume=False)
-            following = s.get_following([username], limit=None, save=True, resume=False)
+            followers = await s.aget_followers([username], limit=None, save=True, resume=False)
+            following = await s.aget_following([username], limit=None, save=True, resume=False)
             add_log(f"@{username}: {len(followers)} followers, {len(following)} following — running comparison")
             await tb.send_connection_analysis(username, followers, following)
         except Exception as e:
@@ -295,7 +295,7 @@ async def run_all_checks(triggered_by: str = "schedule"):
     for username in followers_only_track:
         add_log(f"Fetching followers of @{username}...")
         try:
-            users = s.get_followers([username], limit=None, save=True, resume=False)
+            users = await s.aget_followers([username], limit=None, save=True, resume=False)
             add_log(f"@{username}: {len(users)} followers")
             await tb.send_users_to_telegram(users, "followers", username)
         except Exception as e:
@@ -305,7 +305,7 @@ async def run_all_checks(triggered_by: str = "schedule"):
     for username in following_only_track:
         add_log(f"Fetching following of @{username}...")
         try:
-            users = s.get_following([username], limit=None, save=True, resume=False)
+            users = await s.aget_following([username], limit=None, save=True, resume=False)
             add_log(f"@{username}: {len(users)} following")
             await tb.send_users_to_telegram(users, "following", username)
         except Exception as e:
@@ -319,7 +319,7 @@ async def run_all_checks(triggered_by: str = "schedule"):
         until = datetime.now().strftime("%Y-%m-%d")
         add_log(f"Checking complaints: \"{query}\"...")
         try:
-            tweets = s.search(query=query, since=since, until=until, limit=500, save=True)
+            tweets = await s.asearch(query=query, since=since, until=until, limit=500, save=True)
             add_log(f"Complaints \"{query}\": {len(tweets)} tweets")
             await tb.send_complaints_to_telegram(tweets, query, complaints_only=True)
         except Exception as e:
@@ -540,32 +540,28 @@ def run_feed_check_sync():
         import sys as _sys
         _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
         import tools.telegram_bot as tb
-        from twitter_feed_monitor import fetch_feed, format_tweet_for_telegram
-        from twitter_post import get_auth_from_config as _gac
+        from twitter_feed_monitor import afetch_feed, format_tweet_for_telegram
 
         config    = load_config()
         usernames = config.get("monitor_feeds", [])
         if not usernames:
             return  # nothing configured
 
-        auth_token, ct0 = _gac()
-        if not auth_token:
-            add_log("Feed monitor: no auth_token — skipping")
+        scraper = get_scraper()
+        if not scraper:
+            add_log("Feed monitor: no scraper (Scweet not installed or no auth) — skipping")
             return
 
-        since_ids = _load_feed_since()
         seen_ids  = _load_feed_seen()
 
         add_log(f"Feed monitor: checking {len(usernames)} account(s)…")
-        result = fetch_feed(
-            usernames, auth_token, ct0,
-            since_ids=since_ids,
+        result = asyncio.run(afetch_feed(
+            scraper, usernames,
             min_priority=2,
             include_replies=True,
-        )
+        ))
 
         items = result.get("items", [])
-        new_since_ids = result.get("new_since_ids", {})
 
         # Filter out already-seen tweet IDs
         new_items = [it for it in items if it.get("tweet_id") not in seen_ids]
@@ -581,7 +577,6 @@ def run_feed_check_sync():
             except Exception as e:
                 add_log(f"Feed post error: {e}")
 
-        _save_feed_since(new_since_ids)
         _save_feed_seen(seen_ids)
 
     except Exception as e:
@@ -622,17 +617,16 @@ def run_xissues_check_sync():
         import sys as _sys
         _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
         import tools.telegram_bot as tb
-        from x_issues_monitor import fetch_issues, format_issue_for_telegram
-        from twitter_post import get_auth_from_config as _gac
+        from x_issues_monitor import afetch_issues, format_issue_for_telegram
 
-        auth_token, ct0 = _gac()
-        if not auth_token:
-            add_log("X issues monitor: no auth_token — skipping")
+        scraper = get_scraper()
+        if not scraper:
+            add_log("X issues monitor: no scraper (Scweet not installed or no auth) — skipping")
             return
 
         seen_ids = _load_xissues_seen()
         add_log("X issues monitor: searching staking/yield/AI/trending…")
-        items = fetch_issues(auth_token, ct0, seen_ids=seen_ids)
+        items = asyncio.run(afetch_issues(scraper, seen_ids=seen_ids))
         add_log(f"X issues monitor: {len(items)} new token-tagged issue(s)")
 
         for it in items[:20]:
