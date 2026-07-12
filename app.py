@@ -137,9 +137,16 @@ def get_scraper(db_path: str = None):
                 _json.dump(cookies_data, _f)
 
     if os.path.exists(cookies_file):
-        pool_size = len(existing_pool) if existing_pool else "?"
-        add_log(f"Scweet: using cookies.json pool ({pool_size} accounts)")
-        return Scweet(cookies_file=cookies_file, config=scfg)
+        # Strip dead proxy entries so Scweet connects directly (no proxy)
+        clean_pool = []
+        for acct in existing_pool:
+            entry = {"username": acct["username"], "cookies": acct["cookies"]}
+            clean_pool.append(entry)
+        clean_file = "tools/cookies_noproxy.json"
+        with open(clean_file, "w") as _f:
+            _json.dump(clean_pool, _f)
+        add_log(f"Scweet: using {len(clean_pool)} accounts (direct, no proxy)")
+        return Scweet(cookies_file=clean_file, config=scfg)
     elif auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE"):
         return Scweet(auth_token=auth_token, config=scfg)
     return None
