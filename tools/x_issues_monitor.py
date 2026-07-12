@@ -123,8 +123,6 @@ async def afetch_issues(
                     continue
                 text = _tweet_text(tw)
                 tokens = extract_tokens(text)
-                if not tokens:
-                    continue  # skip — no token name mentioned
                 dedup.add(tid)
                 items.append({
                     "category":  cat,
