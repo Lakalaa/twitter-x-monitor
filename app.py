@@ -136,19 +136,16 @@ def get_scraper(db_path: str = None):
             with open(cookies_file, "w") as _f:
                 _json.dump(cookies_data, _f)
 
-    if os.path.exists(cookies_file):
-        # Strip dead proxy entries so Scweet connects directly (no proxy)
-        clean_pool = []
-        for acct in existing_pool:
-            entry = {"username": acct["username"], "cookies": acct["cookies"]}
-            clean_pool.append(entry)
+    # Always use only the primary account from config — the 569-account pool
+    # has entirely expired auth tokens. Primary credentials are kept current.
+    if auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE"):
+        primary_pool = [{"username": "primary", "cookies": {"auth_token": auth_token, "ct0": ct0}}]
         clean_file = "tools/cookies_noproxy.json"
+        os.makedirs("tools", exist_ok=True)
         with open(clean_file, "w") as _f:
-            _json.dump(clean_pool, _f)
-        add_log(f"Scweet: using {len(clean_pool)} accounts (direct, no proxy)")
+            _json.dump(primary_pool, _f)
+        add_log("Scweet: using primary account (direct, no proxy)")
         return Scweet(cookies_file=clean_file, config=scfg)
-    elif auth_token and auth_token not in ("", "YOUR_AUTH_TOKEN_HERE"):
-        return Scweet(auth_token=auth_token, config=scfg)
     return None
 
 
