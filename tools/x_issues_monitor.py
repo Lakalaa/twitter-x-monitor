@@ -18,29 +18,34 @@ from typing import Optional
 # ── Search queries per category ──────────────────────────────────────────────
 
 _QUERIES: dict[str, list[str]] = {
-    "staking": [
-        "staking issue OR staking bug OR validator down OR slashing",
-        "unstake stuck OR unstaking delay OR staking rewards not showing",
-    ],
-    "yield_reward": [
-        "yield exploit OR vault drained OR farm hack OR rewards not claiming",
-        "airdrop scam OR rewards missing OR claim not working",
-    ],
-    "ai": [
-        "AI agent scam OR AI token rug OR AI agent exploit",
-        "AI crypto issue OR AI token bug OR agent wallet drained",
-    ],
     "trending": [
-        "crypto exploit OR crypto hack OR rug pull",
-        "depeg OR bridge hack OR smart contract exploit",
+        "crypto trending OR crypto news OR crypto update",
+        "bitcoin news OR ethereum news OR altcoin trending",
+        "DeFi update OR DeFi news OR protocol update",
+        "crypto market OR crypto price OR token launch",
+    ],
+    "defi": [
+        "DeFi issue OR liquidity problem OR protocol down",
+        "staking update OR validator update OR network congestion",
+        "yield farming OR staking rewards OR APY update",
+    ],
+    "layer1_layer2": [
+        "Ethereum update OR Solana update OR BNB update",
+        "L2 update OR rollup news OR layer2 issue",
+        "network outage OR chain issue OR blockchain down",
+    ],
+    "tokens": [
+        "token listing OR new token OR token update",
+        "memecoin trending OR altcoin pump OR coin news",
+        "crypto airdrop OR token distribution OR snapshot",
     ],
 }
 
 _CAT_HEADER = {
-    "staking":      "🥩 STAKING ISSUE",
-    "yield_reward": "💰 YIELD/REWARD ISSUE",
-    "ai":           "🤖 AI TOKEN ISSUE",
-    "trending":     "🔥 TRENDING ISSUE",
+    "trending":      "🔥 TRENDING CRYPTO",
+    "defi":          "🏦 DEFI UPDATE",
+    "layer1_layer2": "⛓️ NETWORK UPDATE",
+    "tokens":        "🪙 TOKEN NEWS",
 }
 
 _CASHTAG_RE = re.compile(r"\$[A-Za-z][A-Za-z0-9]{1,9}\b")
