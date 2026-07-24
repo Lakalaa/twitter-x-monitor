@@ -614,26 +614,20 @@ def _save_xissues_seen(seen: set):
 
 def run_xissues_check_sync():
     """
-    Search X broadly (not tied to any specific account) for trending issue
-    chatter: staking problems, yield/reward issues, AI token/agent issues,
-    and general trending crypto issues. Only posts tweets that mention an
-    actual token name ($TICKER). Runs every 45 minutes.
+    Fetch recent tweets from curated top crypto X accounts and post
+    crypto-relevant ones to Telegram. Runs every 45 minutes.
+    Uses direct UserTweets GraphQL endpoint (no Scweet needed).
     """
     try:
         import sys as _sys
         _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
         import tools.telegram_bot as tb
-        from x_issues_monitor import afetch_issues, format_issue_for_telegram
-
-        scraper = get_scraper()
-        if not scraper:
-            add_log("X issues monitor: no scraper (Scweet not installed or no auth) — skipping")
-            return
+        from x_issues_monitor import fetch_issues, format_issue_for_telegram
 
         seen_ids = _load_xissues_seen()
-        add_log("X issues monitor: searching staking/yield/AI/trending…")
-        items = asyncio.run(afetch_issues(scraper, seen_ids=seen_ids))
-        add_log(f"X issues monitor: {len(items)} new token-tagged issue(s)")
+        add_log("X issues monitor: fetching tweets from curated crypto accounts…")
+        items = fetch_issues(seen_ids=seen_ids, per_account=15)
+        add_log(f"X issues monitor: {len(items)} new crypto tweet(s)")
 
         for it in items[:20]:
             try:
