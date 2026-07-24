@@ -145,7 +145,7 @@ def get_scraper(db_path: str = None):
         with open(clean_file, "w") as _f:
             _json.dump(primary_pool, _f)
         add_log("Scweet: using primary account (direct, no proxy)")
-        return Scweet(cookies_file=clean_file, config=scfg)
+        return Scweet(cookies_file=clean_file, config=scfg, db_path=_db)
     return None
 
 
