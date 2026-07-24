@@ -109,6 +109,8 @@ def get_scraper(db_path: str = None):
         daily_requests_limit=500,
         # Don't wait 30 days to retry after a single 401 — just 5 minutes
         auth_cooldown_s=300,
+        # Auto-fetch fresh query IDs from Twitter's JS bundle on startup
+        manifest_scrape_on_init=True,
     )
 
     cookies_file = "tools/cookies.json"
