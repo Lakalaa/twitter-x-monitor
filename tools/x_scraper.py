@@ -174,6 +174,10 @@ def fetch_user_tweets(user_id: str, screen_name: str, session, count: int = 20) 
             }, separators=(",", ":")),
             "features": json.dumps(_TWEET_FEATURES, separators=(",", ":")),
         }, timeout=15)
+        if r.status_code == 429:
+            import logging
+            logging.warning(f"x_scraper: rate-limited (429) for @{screen_name}, skipping")
+            return []
         if r.status_code == 200:
             tweets = _find_tweets(r.json())
             for t in tweets:
