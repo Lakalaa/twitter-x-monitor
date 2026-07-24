@@ -1,58 +1,63 @@
 """
 x_issues_monitor.py
-Scrapes X/Twitter broadly (not tied to any specific account) for trending
-"issue" tweets across categories: staking, yield/rewards, AI (agents/tokens),
-and general trending crypto issues. Only tweets that mention an actual
-token/cashtag (e.g. $SOL, $PEPE) are surfaced — plain chatter with no token
-name is skipped.
+Monitors top crypto X/Twitter accounts for trending issues, price moves,
+DeFi updates, and token news. Sends matched tweets to Telegram.
 
-Uses the Scweet GraphQL client (same engine the dashboard's follower/following
-scraping uses) — the old Twitter v1.1 search/tweets.json endpoint was shut
-down by X and always returns 404.
+Uses direct UserTweets GraphQL endpoint (works from datacenter IPs) instead
+of SearchTimeline (which is blocked by Cloudflare on cloud server IPs).
 """
 from __future__ import annotations
 import re
-from datetime import datetime, timezone
 from typing import Optional
 
-# ── Search queries per category ──────────────────────────────────────────────
+from x_scraper import fetch_tweets_from_accounts
 
-_QUERIES: dict[str, list[str]] = {
-    "trending": [
-        "crypto trending OR crypto news OR crypto update",
-        "bitcoin news OR ethereum news OR altcoin trending",
-        "DeFi update OR DeFi news OR protocol update",
-        "crypto market OR crypto price OR token launch",
-    ],
-    "defi": [
-        "DeFi issue OR liquidity problem OR protocol down",
-        "staking update OR validator update OR network congestion",
-        "yield farming OR staking rewards OR APY update",
-    ],
-    "layer1_layer2": [
-        "Ethereum update OR Solana update OR BNB update",
-        "L2 update OR rollup news OR layer2 issue",
-        "network outage OR chain issue OR blockchain down",
-    ],
-    "tokens": [
-        "token listing OR new token OR token update",
-        "memecoin trending OR altcoin pump OR coin news",
-        "crypto airdrop OR token distribution OR snapshot",
-    ],
+_CASHTAG_RE   = re.compile(r"\$[A-Za-z][A-Za-z0-9]{1,9}\b")
+_CRYPTO_KW_RE = re.compile(
+    r"\b(bitcoin|ethereum|solana|bnb|crypto|defi|nft|token|blockchain|"
+    r"altcoin|memecoin|airdrop|staking|yield|liquidit|protocol|rollup|"
+    r"layer2|l2|smart.?contract|on.?chain|dex|cex|wallet|hack|exploit|"
+    r"rug.?pull|pump|dump|listing|launch|upgrade|fork|halving|etf|"
+    r"btc|eth|sol|usdt|usdc|matic|avax|dot|ada|xrp|doge|shib|pepe)\b",
+    re.IGNORECASE,
+)
+
+_CATEGORIES = {
+    "bitcoin":   ["Bitcoin", "DocumentingBTC", "BitcoinMagazine", "saylor"],
+    "ethereum":  ["ethereum", "VitalikButerin", "sassal0x", "ultrasoundmoney"],
+    "defi":      ["DefiLlama", "AaveAave", "Uniswap", "MakerDAO", "CurveFinance"],
+    "altcoins":  ["solana", "Polkadot", "Avalancheavax", "cosmos"],
+    "market":    ["WatcherGuru", "lookonchain", "CryptoCapo_", "inversebrah"],
+    "exchanges": ["binance", "cz_binance", "coinbase", "Bybit_Official"],
 }
+
+_ALL_ACCOUNTS: list[str] = []
+for _accs in _CATEGORIES.values():
+    for _a in _accs:
+        if _a not in _ALL_ACCOUNTS:
+            _ALL_ACCOUNTS.append(_a)
 
 _CAT_HEADER = {
-    "trending":      "🔥 TRENDING CRYPTO",
-    "defi":          "🏦 DEFI UPDATE",
-    "layer1_layer2": "⛓️ NETWORK UPDATE",
-    "tokens":        "🪙 TOKEN NEWS",
+    "bitcoin":   "₿ BITCOIN UPDATE",
+    "ethereum":  "⟠ ETHEREUM UPDATE",
+    "defi":      "🏦 DEFI UPDATE",
+    "altcoins":  "🔵 ALTCOIN NEWS",
+    "market":    "📊 MARKET ALERT",
+    "exchanges": "🏛️ EXCHANGE NEWS",
+    "misc":      "🔥 CRYPTO UPDATE",
 }
 
-_CASHTAG_RE = re.compile(r"\$[A-Za-z][A-Za-z0-9]{1,9}\b")
+_ACCOUNT_TO_CAT: dict[str, str] = {}
+for _cat, _accs in _CATEGORIES.items():
+    for _a in _accs:
+        _ACCOUNT_TO_CAT[_a.lower()] = _cat
+
+
+def _is_crypto_relevant(text: str) -> bool:
+    return bool(_CASHTAG_RE.search(text) or _CRYPTO_KW_RE.search(text))
 
 
 def extract_tokens(text: str) -> list[str]:
-    """Return unique cashtag-style token symbols found in text, e.g. ['$SOL']."""
     found = _CASHTAG_RE.findall(text)
     seen, out = set(), []
     for t in found:
@@ -63,92 +68,63 @@ def extract_tokens(text: str) -> list[str]:
     return out
 
 
-def _tweet_text(tw: dict) -> str:
-    return tw.get("text") or tw.get("rawContent", "") or ""
+def _guess_category(tweet: dict) -> str:
+    user = tweet.get("user", "").lower()
+    return _ACCOUNT_TO_CAT.get(user, "misc")
 
 
-def _tweet_id(tw: dict) -> str:
-    return str(tw.get("id") or tw.get("tweet_id") or tw.get("id_str") or "")
-
-
-def _tweet_url(tw: dict) -> str:
-    return tw.get("tweet_url") or tw.get("url") or ""
-
-
-def _tweet_date(tw: dict) -> str:
-    ts = tw.get("timestamp") or tw.get("date") or tw.get("created_at") or ""
-    return str(ts)[:19].replace("T", " ") if ts else ""
-
-
-def _tweet_user(tw: dict) -> str:
-    u = tw.get("user", {}) or {}
-    return u.get("screen_name") or tw.get("username", "") or ""
-
-
-def _tweet_likes(tw: dict) -> int:
-    return tw.get("likes", tw.get("likeCount", 0)) or 0
-
-
-def _tweet_retweets(tw: dict) -> int:
-    return tw.get("retweets", tw.get("retweetCount", 0)) or 0
-
-
-async def afetch_issues(
-    scraper,
-    categories: Optional[list[str]] = None,
+def fetch_issues(
     seen_ids: Optional[set] = None,
-    per_query_count: int = 20,
+    per_account: int = 15,
 ) -> list[dict]:
     """
-    Search X broadly across issue categories using an already-constructed
-    Scweet client (scraper). Only returns tweets that mention a real
-    token/cashtag (e.g. $SOL) — everything else is dropped.
+    Fetch recent tweets from curated crypto accounts.
+    Returns only crypto-relevant, unseen tweets sorted by engagement.
     """
-    categories = categories or list(_QUERIES.keys())
     seen_ids = seen_ids or set()
-    items: list[dict] = []
-    dedup: set = set()
+    raw = fetch_tweets_from_accounts(_ALL_ACCOUNTS, tweets_per_account=per_account)
 
-    for cat in categories:
-        for query in _QUERIES.get(cat, []):
-            try:
-                tweets = await scraper.asearch(query=query, limit=per_query_count, save=False)
-            except Exception as e:
-                print(f"[x_issues] Error for query '{query[:40]}...': {e}")
-                continue
+    items = []
+    for tw in raw:
+        tid  = tw.get("id", "")
+        text = tw.get("text", "")
+        if not tid or tid in seen_ids:
+            continue
+        if not _is_crypto_relevant(text):
+            continue
+        tokens = extract_tokens(text)
+        cat    = _guess_category(tw)
+        items.append({
+            "category":  cat,
+            "tweet_id":  tid,
+            "text":      text[:500],
+            "url":       tw.get("url", ""),
+            "date":      tw.get("date", ""),
+            "user":      tw.get("user", ""),
+            "likes":     tw.get("likes", 0),
+            "retweets":  tw.get("retweets", 0),
+            "tokens":    tokens,
+        })
 
-            for tw in tweets:
-                tid = _tweet_id(tw)
-                if not tid or tid in seen_ids or tid in dedup:
-                    continue
-                text = _tweet_text(tw)
-                tokens = extract_tokens(text)
-                dedup.add(tid)
-                items.append({
-                    "category":  cat,
-                    "tweet_id":  tid,
-                    "text":      text[:500],
-                    "url":       _tweet_url(tw),
-                    "date":      _tweet_date(tw),
-                    "user":      _tweet_user(tw),
-                    "likes":     _tweet_likes(tw),
-                    "retweets":  _tweet_retweets(tw),
-                    "tokens":    tokens,
-                })
-
-    items.sort(key=lambda x: (x["likes"] + x["retweets"], x["date"]), reverse=True)
+    items.sort(key=lambda x: (x["likes"] + x["retweets"]), reverse=True)
     return items
 
 
-def fetch_issues(scraper, **kwargs) -> list[dict]:
-    """Sync wrapper — only call this from a context with NO running event loop."""
+async def afetch_issues(
+    scraper=None,
+    categories=None,
+    seen_ids: Optional[set] = None,
+    per_query_count: int = 20,
+) -> list[dict]:
+    """Async wrapper — scraper arg kept for backward compat, not used."""
     import asyncio
-    return asyncio.run(afetch_issues(scraper, **kwargs))
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: fetch_issues(seen_ids=seen_ids, per_account=per_query_count))
 
 
 def format_issue_for_telegram(item: dict) -> str:
-    cat    = item.get("category", "trending")
-    header = _CAT_HEADER.get(cat, "🔥 TRENDING ISSUE")
+    cat    = item.get("category", "misc")
+    header = _CAT_HEADER.get(cat, "🔥 CRYPTO UPDATE")
     text   = item.get("text", "")
     url    = item.get("url", "")
     date   = item.get("date", "")
@@ -164,10 +140,10 @@ def format_issue_for_telegram(item: dict) -> str:
 
     lines = [
         f"🔴 <b>{header}</b>",
-        f"{tok_line}",
-        f'👤 <a href="https://twitter.com/{user}">@{esc(user)}</a>' if user else "",
+        tok_line if tok_line else "",
+        f'👤 <a href="https://x.com/{user}">@{esc(user)}</a>' if user else "",
         f'<a href="{url}">{esc(text[:300])}</a>' if url else esc(text[:300]),
         f"❤️ {likes:,}  🔁 {rts:,}",
-        f"<i>🕐 {date}</i>",
+        f"<i>🕐 {date}</i>" if date else "",
     ]
     return "\n".join(l for l in lines if l)
