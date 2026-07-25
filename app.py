@@ -630,6 +630,26 @@ def run_xissues_check_sync():
         add_log("X issues monitor: scanning for real user complaints…")
         items = fetch_issues(seen_ids=seen_ids, per_account=20)
 
+        # Log pipeline diagnostics so we can debug from /api/status
+        try:
+            from x_issues_monitor import _LAST_SCAN_STATS as _stats
+            if _stats:
+                add_log(
+                    f"X issues monitor: step1 — {_stats.get('ids_resolved',0)} IDs resolved, "
+                    f"{_stats.get('ids_failed',0)} failed, "
+                    f"{_stats.get('official_tweets',0)} recent tweets"
+                )
+                add_log(
+                    f"X issues monitor: step2 — {_stats.get('reply_threads',0)} threads checked, "
+                    f"{_stats.get('raw_replies',0)} raw replies, "
+                    f"{_stats.get('unique_replies',0)} unique → "
+                    f"bucketA={_stats.get('bucket_a',0)} complaints, "
+                    f"bucketB={_stats.get('bucket_b',0)} urgent, "
+                    f"bucketC={_stats.get('bucket_c',0)} trending"
+                )
+        except Exception:
+            pass
+
         # ONLY send real user complaints — no official posts, no market news, no adverts
         complaints = [i for i in items if i.get("type") == "user_complaint"]
         skipped = len(items) - len(complaints)
