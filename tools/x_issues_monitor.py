@@ -1132,6 +1132,25 @@ def _is_complaint(text: str) -> bool:
         return True
     return False
 
+
+def _is_reply_complaint(text: str) -> bool:
+    """
+    Relaxed check for reply context (someone replying under an official crypto account post).
+    The reply context itself implies personal stake — we only need a problem signal, not a pronoun.
+    Accepts:
+      (a) personal pronoun + problem word (strict match from _is_complaint)
+      (b) help question pattern
+      (c) problem word alone — "withdrawal stuck", "bridge not working", "failed transaction"
+    This catches real complaints like "still pending 3 days", "tx reverted", "can't unstake"
+    that don't use "I/my" explicitly.
+    """
+    if _is_complaint(text):
+        return True
+    # In reply context: problem keyword alone is enough
+    if _HAS_PROBLEM_RE.search(text):
+        return True
+    return False
+
 # OFFICIAL URGENT — for official account posts only (exploits, outages, hacks)
 _OFFICIAL_URGENT_RE = re.compile(
     r"\b("
@@ -1317,11 +1336,15 @@ def fetch_issues(
 
     official_tweets: list[dict] = []
     global_seen: set[str] = set(seen_ids)
+    ids_resolved = 0
+    ids_failed   = 0
 
     for screen_name in all_accounts_to_scan:
         uid = get_user_id(screen_name, session, cache)
         if not uid:
+            ids_failed += 1
             continue
+        ids_resolved += 1
         tweets = fetch_user_tweets(uid, screen_name, session, count=per_account)
         for t in tweets:
             tid = t.get("id", "")
@@ -1338,6 +1361,11 @@ def fetch_issues(
             official_tweets.append(t)
         time.sleep(0.4)
 
+    logging.info(
+        f"x_issues_monitor: step1 — {ids_resolved} IDs resolved, "
+        f"{ids_failed} failed (429/cache miss), {len(official_tweets)} recent tweets found"
+    )
+
     # ── Step 2: Fetch reply threads ────────────────────────────────────────
     # Use TweetDetail on ALL fetched official tweets — not sorted by popularity.
     # A tweet with 2 likes from @MetaMask support still has real users replying
@@ -1350,6 +1378,7 @@ def fetch_issues(
     reply_sources = reply_sources[:60]
 
     user_reply_tweets: list[dict] = []  # replies from random community users
+    total_raw_replies = 0
 
     for src in reply_sources:
         src_id  = src.get("id", "")
@@ -1358,6 +1387,7 @@ def fetch_issues(
         if not src_id:
             continue
         replies = fetch_tweet_replies(src_id, session, max_age_hours=3)
+        total_raw_replies += len(replies)
         for r in replies:
             rid = r.get("id", "")
             if not rid or rid in global_seen:
@@ -1378,6 +1408,11 @@ def fetch_issues(
 
     _save_user_id_cache(cache)
 
+    logging.info(
+        f"x_issues_monitor: step2 — checked {len(reply_sources)} reply threads, "
+        f"{total_raw_replies} raw replies, {len(user_reply_tweets)} unique non-self replies"
+    )
+
     # ── Step 3: Classify ──────────────────────────────────────────────────
 
     bucket_a: list[dict] = []  # user complaint replies  ← PRIORITY
@@ -1392,10 +1427,10 @@ def fetch_issues(
             continue
         if _is_spam(text):
             continue
-        # In a reply context: accept ANY complaint/question language.
-        # We don't require crypto cashtags or trending keywords — a reply saying
-        # "how do I withdraw?" or "my transfer is stuck" is enough.
-        if not _is_complaint(text):
+        # In a reply context: relaxed check — problem word alone is enough.
+        # We don't require personal pronouns since replying to an official post
+        # already signals personal context. "withdrawal stuck", "tx failed" etc.
+        if not _is_reply_complaint(text):
             continue
         bucket_a.append({
             "type":          "user_complaint",
