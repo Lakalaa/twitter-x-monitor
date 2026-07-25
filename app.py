@@ -4675,6 +4675,32 @@ def api_check_now():
     return jsonify({"ok": True, "message": "Check started"})
 
 
+@app.route("/api/test-twitter")
+def api_test_twitter():
+    """Quick token health check — fetches 3 tweets from @ethereum and returns result."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        from x_scraper import _make_session, _load_creds, get_user_id, fetch_user_tweets, _load_user_id_cache
+        auth, ct0 = _load_creds()
+        if not auth:
+            return jsonify({"ok": False, "error": "no auth token"})
+        session = _make_session(auth, ct0)
+        cache   = _load_user_id_cache()
+        uid = get_user_id("ethereum", session, cache)
+        if not uid:
+            return jsonify({"ok": False, "error": "get_user_id returned None for @ethereum (likely 429)"})
+        tweets = fetch_user_tweets(uid, "ethereum", session, count=3)
+        return jsonify({
+            "ok":     True,
+            "uid":    uid,
+            "tweets": len(tweets),
+            "sample": tweets[0].get("text", "")[:120] if tweets else None,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 @app.route("/api/start", methods=["POST"])
 def api_start():
     global scheduler_thread
