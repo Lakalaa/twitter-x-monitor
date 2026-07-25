@@ -908,7 +908,7 @@ def fetch_issues(
         src_user = src.get("user", "")
         if not src_id:
             continue
-        replies = fetch_tweet_replies(src_id, session, max_age_hours=48)
+        replies = fetch_tweet_replies(src_id, session, max_age_hours=3)
         for r in replies:
             rid = r.get("id", "")
             if not rid or rid in global_seen:
