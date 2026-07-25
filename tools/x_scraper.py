@@ -60,6 +60,18 @@ _TWEET_FEATURES = {
 _CONFIG_FILE = os.path.join(os.path.dirname(__file__), "targets.json")
 _USER_ID_CACHE_FILE = os.path.join(os.path.dirname(__file__), "x_user_id_cache.json")
 
+# ── Per-account rate-limit cooldown tracking ─────────────────────────────────
+# When we get 429 on an account, skip it for 16 minutes so we don't waste
+# every cycle hammering blocked accounts. Resets naturally as windows expire.
+_RATE_LIMIT_COOLDOWN: dict[str, float] = {}   # lower(screen_name) → unblocked_at
+_RL_WINDOW = 16 * 60  # 16 min — Twitter's 15-min window + 1-min buffer
+
+def _is_rl(name: str) -> bool:
+    return time.time() < _RATE_LIMIT_COOLDOWN.get(name.lower(), 0)
+
+def _mark_rl(name: str) -> None:
+    _RATE_LIMIT_COOLDOWN[name.lower()] = time.time() + _RL_WINDOW
+
 
 def _load_creds() -> tuple[str, str]:
     """Return (auth_token, ct0) from config or env."""
@@ -147,12 +159,19 @@ def get_user_id(screen_name: str, session, cache: dict) -> Optional[str]:
     key = screen_name.lower()
     if key in cache:
         return cache[key]
+    if _is_rl(screen_name):
+        return None  # still in cooldown, skip
     url = f"https://x.com/i/api/graphql/{_QID_USER_BY_SCREEN}/UserByScreenName"
     try:
         r = session.get(url, params={
             "variables": json.dumps({"screen_name": screen_name, "withSafetyModeUserFields": True}, separators=(",", ":")),
             "features":  json.dumps(_USER_FEATURES, separators=(",", ":")),
         }, timeout=15)
+        if r.status_code == 429:
+            import logging
+            logging.warning(f"x_scraper: rate-limited (429) resolving @{screen_name}, cooldown 16 min")
+            _mark_rl(screen_name)
+            return None
         if r.status_code == 200:
             data = r.json()
             uid = data.get("data", {}).get("user", {}).get("result", {}).get("rest_id", "")
@@ -166,6 +185,8 @@ def get_user_id(screen_name: str, session, cache: dict) -> Optional[str]:
 
 def fetch_user_tweets(user_id: str, screen_name: str, session, count: int = 20) -> list[dict]:
     """Fetch recent non-RT tweets from a user."""
+    if _is_rl(screen_name):
+        return []  # still in 16-min cooldown from a previous 429
     url = f"https://x.com/i/api/graphql/{_QID_USER_TWEETS}/UserTweets"
     try:
         r = session.get(url, params={
@@ -181,7 +202,8 @@ def fetch_user_tweets(user_id: str, screen_name: str, session, count: int = 20) 
         }, timeout=15)
         if r.status_code == 429:
             import logging
-            logging.warning(f"x_scraper: rate-limited (429) for @{screen_name}, skipping")
+            logging.warning(f"x_scraper: rate-limited (429) for @{screen_name}, cooldown 16 min")
+            _mark_rl(screen_name)
             return []
         if r.status_code == 200:
             tweets = _find_tweets(r.json())
