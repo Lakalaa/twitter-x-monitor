@@ -238,6 +238,65 @@ _ACCOUNTS: dict[str, list[str]] = {
         "bittensor_", "grass_io", "io_net",
         "RenderToken", "akash_network", "FetchAI_",
         "virtuals_io", "ai16zdao", "elizaOS_",
+        "NumeraiOfficial", "SingularityNET",
+    ],
+
+    # ── Trading bots — users lose money when bots break, stop, mis-trade ─
+    "trading_bots": [
+        "3commas_io", "pionex", "bitsgap", "Cryptohopper",
+        "CornixIO", "WunderTrading", "TradeSanta_io",
+        "MaestroSniper", "TrojanOnSolana", "BananaGunBot",
+        "bonkbot_io", "BullX_io", "Photon_sol",
+        "hype_terminal", "SigmaBot_sol",
+    ],
+
+    # ── On/off ramps — card declines, failed deposits, KYC issues ────────
+    "onramps": [
+        "MoonPay", "Transak", "RampNetwork", "Banxa",
+        "SimplexCC", "Onramper", "Alchemy_api",
+        "LifiProtocol", "ChangeNOW_io", "SimpleSwap_io",
+        "FixedFloat", "StealthEX_io",
+    ],
+
+    # ── Portfolio / tracking tools — sync failures, wrong balances ────────
+    "portfolio": [
+        "zerion", "DeBankDeFi", "Zapper_fi", "CoinStats",
+        "Delta_App", "rotki", "ApeBoard", "Pulsar_Finance",
+        "NFTbank_ai", "OKX",
+    ],
+
+    # ── NFT marketplaces / tools — failed mints, stuck listings ──────────
+    "nft_tools": [
+        "opensea", "blur_io", "NFTfi", "paraspace_xyz",
+        "nftperp", "NFTScan_Official", "traitsniper",
+        "icy_tools", "nansen_ai", "Reservoir0x",
+    ],
+
+    # ── DeFi tools / aggregators — users lose funds in complex txns ───────
+    "defi_tools": [
+        "DeFiSaver", "InstaDApp", "CowProtocol",
+        "Furucombo", "AlphaFinanceLab", "IndexCoop",
+        "xdotfinance", "EnzymeFinance",
+    ],
+
+    # ── Crypto payments / merchants — stuck payments, wrong amounts ───────
+    "payments": [
+        "BitPay", "NOWPayments_net", "CoinPayments",
+        "BTCPayServer", "Utrust", "TripleA_io",
+        "Coinbase_Commerce", "SpherePay",
+    ],
+
+    # ── Launchpads — users miss IDOs, refunds stuck, tokens not received ─
+    "launchpads": [
+        "Polkastarter", "DaoMaker", "trustpad_io",
+        "PinkSale_Finance", "GemPad_io", "seedify_fund",
+        "GameFi_Official", "StartFi_io", "DAO5_io",
+    ],
+
+    # ── Copy trading / social trading — signal issues, trade failures ─────
+    "copy_trading": [
+        "eToro", "CopyTradingApp", "Bitget_Global",
+        "OKXApps", "Bybit_Official", "MEXC_Global",
     ],
 
     # ── Alt-L1 chains ─────────────────────────────────────────────────────
@@ -368,29 +427,52 @@ _HAS_PROBLEM_RE = re.compile(
     # Stuck / pending
     r"stuck|pending|pending\s+for|delayed|not\s+(?:processed|credited|arrived|received|showing)|"
     r"never\s+(?:arrived|received|got|credited)|didn.?t\s+(?:arrive|receive|credit)|"
-    # Failed transactions
+    # Failed transactions / actions
     r"fail(?:ed)?|revert(?:ed)?|reject(?:ed)?|"
     # Missing funds
-    r"missing|lost|gone|disappear(?:ed)?|"
+    r"missing|lost|gone|disappear(?:ed)?|vanish(?:ed)?|"
     # Access issues
-    r"locked|frozen|frozen\s+out|suspended|blocked|banned|can.?t\s+access|locked\s+out|"
+    r"locked|frozen|suspended|blocked|banned|can.?t\s+access|locked\s+out|"
     # Can't do action
     r"can.?t|cannot|couldn.?t|unable\s+to|not\s+(?:able|working)|"
     # Support not responding
-    r"no\s+response|zero\s+response|not\s+responding|ignor(?:ed|ing)|no\s+reply|"
+    r"no\s+response|not\s+responding|ignor(?:ed|ing)|no\s+reply|"
     r"been\s+waiting|still\s+waiting|waiting\s+(?:\d+|\w+\s+)\s*(?:day|hour|week)|"
     r"(?:day|hour|week)s?\s+(?:and\s+)?(?:still|no|without)|"
-    # Withdrawal / deposit
-    r"withdraw(?:al)?|deposit\s+(?:fail|stuck|not)|"
-    # Staking problems
+    # Withdrawal / deposit / transfer
+    r"withdraw(?:al)?|deposit\s+(?:fail|stuck|not)|transfer\s+(?:fail|stuck)|"
+    # Staking / unstaking
     r"unstake|can.?t\s+stake|staking\s+(?:issue|problem|fail|stuck)|"
-    # Lost access / recovery
+    # Lost access / funds
     r"lost\s+access|lost\s+(?:my\s+)?(?:funds?|money|coins?|tokens?|eth|btc|sol|xrp)|"
     # Refund / compensation
     r"refund|compensat(?:e|ion)|reimburs(?:e|ement)|"
-    # Specific action failures
+    # Wrong network / address
     r"wrong\s+(?:address|network|amount|chain)|sent\s+to\s+wrong|"
-    r"double\s+(?:charged|deducted)|charged\s+twice|overcharged"
+    r"double\s+(?:charged|deducted)|charged\s+twice|overcharged|"
+    # Trading bot specific
+    r"bot\s+(?:stopped|crashed|not\s+working|failed|disconnected|broke)|"
+    r"api\s+(?:key|error|disconnect|invalid|expired)|"
+    r"trade\s+(?:closed|failed|not\s+executed|missed)|order\s+(?:failed|rejected|stuck)|"
+    r"signal\s+(?:not|failed|missed)|my\s+(?:bot|signal|trade|position)|"
+    # KYC / verification
+    r"kyc\s+(?:failed|rejected|stuck|pending)|verification\s+(?:failed|rejected|pending)|"
+    r"identity\s+(?:rejected|failed|not\s+verified)|"
+    # Card / payment
+    r"card\s+(?:was\s+)?(?:declined|failed|charged|rejected)|declined\b|"
+    r"payment\s+(?:failed|declined|stuck)|"
+    r"charged\s+(?:but|without)|money\s+(?:deducted|taken|gone)|"
+    # Mint / NFT / launchpad
+    r"mint\s+(?:failed|stuck|not|didn.?t)|didn.?t\s+receive\s+(?:my|the)\s+(?:nft|token)|"
+    r"ido\s+(?:allocation|not\s+received|refund)|launchpad\s+(?:issue|stuck|failed)|"
+    r"airdrop\s+(?:not|didn.?t|missing|stuck)|didn.?t\s+get\s+(?:my\s+)?airdrop|"
+    # Gas / fees
+    r"gas\s+(?:too\s+high|stuck|failed|used\s+up)|fees?\s+(?:too\s+high|stuck|charged)|"
+    # Swap / exchange specific
+    r"swap\s+(?:failed|stuck|wrong)|bridge\s+(?:stuck|failed|lost)|"
+    r"exchange\s+(?:rate\s+wrong|failed|stuck)|"
+    # Account problems
+    r"account\s+(?:banned|suspended|frozen|hacked|compromised|not\s+accessible)"
     r")\b",
     re.IGNORECASE,
 )
@@ -497,6 +579,14 @@ _CAT_HEADER = {
     "meme":          "🐸 MEME COIN",
     "gaming":        "🎮 GAMING",
     "ai_crypto":     "🤖 AI / COMPUTE",
+    "trading_bots":  "🤖 TRADING BOT",
+    "onramps":       "💳 ON/OFF RAMP",
+    "portfolio":     "📊 PORTFOLIO TOOL",
+    "nft_tools":     "🖼️  NFT TOOL",
+    "defi_tools":    "⚙️  DEFI TOOL",
+    "payments":      "💸 CRYPTO PAYMENT",
+    "launchpads":    "🚀 LAUNCHPAD",
+    "copy_trading":  "📋 COPY TRADING",
     "altl1":         "🔵 ALT-CHAIN",
     "security":      "🚨 SECURITY",
     "market":        "📊 MARKET",
