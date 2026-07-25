@@ -199,51 +199,81 @@ for _cat, _accs in _ACCOUNTS.items():
 
 _CASHTAG_RE = re.compile(r"\$[A-Z]{2,10}\b")
 
-# USER COMPLAINT / QUESTION — catch anyone asking for help or reporting an issue.
-# This is intentionally very broad — a user with 0 followers asking "how do I
-# withdraw?" is exactly what we want. No engagement threshold, no popularity filter.
-_COMPLAINT_RE = re.compile(
+# ── TWO-PART COMPLAINT DETECTION ─────────────────────────────────────────────
+# A real complaint requires BOTH: personal ownership language AND a problem word.
+# This filters OUT market discussion ("Goldman backs crypto bill"), news commentary
+# ("what's the chance it passes?"), and general chat — while keeping in tweets
+# like "my withdrawal is stuck 3 days" or "I can't unstake my ETH".
+
+# Part 1: personal ownership / first-person context
+_HAS_PERSONAL_RE = re.compile(
+    r"\b(my|our|i\b|i\'ve|i\'m|i\'d|i have|i had|i sent|i tried|"
+    r"we\'ve|we\'re|we have|we had|"
+    r"\bme\b|mine|myself|myself|our\s+funds?|our\s+account|our\s+wallet)\b",
+    re.IGNORECASE,
+)
+
+# Part 2: problem / stuck / distress words
+_HAS_PROBLEM_RE = re.compile(
     r"\b("
-    # ── Question language (confused/lost users) ─────────────────────────────
-    r"how do i|how can i|how to|where do i|where can i|where is my|"
-    r"can anyone|can someone|does anyone|anyone know|anyone else|"
-    r"is there any|is anyone|why is my|why isn.?t|why won.?t|why did|"
-    r"what happened|what.?s happening|what.?s going on|"
-    r"any idea|any help|any advice|please advise|"
-    r"i need help|i need support|need assistance|"
-    # ── Basic help language ─────────────────────────────────────────────────
-    r"help|please help|need help|anyone help|"
-    r"no response|still waiting|waiting for|support ticket|"
-    r"contacted|reached out|no reply|ignoring|days? ago|weeks? ago|"
-    r"hours? ago|been waiting|still no|not resolved|"
-    # ── Transaction / fund issues ───────────────────────────────────────────
-    r"stuck|pending|failed|revert|reverted|not.?credited|missing|"
-    r"lost|gone|can.?t|cannot|not working|not able|unable|"
-    r"withdraw|withdrawal|deposit|not.?received|not.?showing|"
-    r"didn.?t arrive|never arrived|never got|never received|"
-    # ── Staking / yield ─────────────────────────────────────────────────────
-    r"unstake|unstaking|staking|locked|stake|"
-    r"yield|apy|reward|not.?earning|validator|slash|"
-    # ── Account / wallet issues ─────────────────────────────────────────────
-    r"frozen|freeze|suspend|account|locked out|"
-    r"can.?t access|blocked|banned|"
-    r"wallet|address|"
-    # ── Transaction mechanics ───────────────────────────────────────────────
-    r"gas|nonce|approval|signature|transaction|tx|"
-    r"bridge|bridging|cross.?chain|transfer|swap|"
-    # ── Error language ──────────────────────────────────────────────────────
-    r"error|bug|glitch|issue|problem|broken|"
-    # ── Complaint sentiment ─────────────────────────────────────────────────
-    r"horrible|terrible|worst|scam|rip.?off|"
-    r"refund|compensation|money|funds|balance|"
-    r"wrong amount|overcharged|charged.?twice|"
-    # ── Network-name mentions (in reply context these signal an issue) ───────
-    r"ronin|litecoin|ltc|xrp|xrpl|solana|sol|"
-    r"base|arbitrum|optimism|polygon|zksync|bnb|bsc|"
-    r"ethereum|eth|bitcoin|btc"
+    # Stuck / pending
+    r"stuck|pending|pending\s+for|delayed|not\s+(?:processed|credited|arrived|received|showing)|"
+    r"never\s+(?:arrived|received|got|credited)|didn.?t\s+(?:arrive|receive|credit)|"
+    # Failed transactions
+    r"fail(?:ed)?|revert(?:ed)?|reject(?:ed)?|"
+    # Missing funds
+    r"missing|lost|gone|disappear(?:ed)?|"
+    # Access issues
+    r"locked|frozen|frozen\s+out|suspended|blocked|banned|can.?t\s+access|locked\s+out|"
+    # Can't do action
+    r"can.?t|cannot|couldn.?t|unable\s+to|not\s+(?:able|working)|"
+    # Support not responding
+    r"no\s+response|zero\s+response|not\s+responding|ignor(?:ed|ing)|no\s+reply|"
+    r"been\s+waiting|still\s+waiting|waiting\s+(?:\d+|\w+\s+)\s*(?:day|hour|week)|"
+    r"(?:day|hour|week)s?\s+(?:and\s+)?(?:still|no|without)|"
+    # Withdrawal / deposit
+    r"withdraw(?:al)?|deposit\s+(?:fail|stuck|not)|"
+    # Staking problems
+    r"unstake|can.?t\s+stake|staking\s+(?:issue|problem|fail|stuck)|"
+    # Lost access / recovery
+    r"lost\s+access|lost\s+(?:my\s+)?(?:funds?|money|coins?|tokens?|eth|btc|sol|xrp)|"
+    # Refund / compensation
+    r"refund|compensat(?:e|ion)|reimburs(?:e|ement)|"
+    # Specific action failures
+    r"wrong\s+(?:address|network|amount|chain)|sent\s+to\s+wrong|"
+    r"double\s+(?:charged|deducted)|charged\s+twice|overcharged"
     r")\b",
     re.IGNORECASE,
 )
+
+# HELP QUESTION — someone asking how to fix their specific situation
+# (even without explicit "stuck/failed" — just "how do I withdraw?" is valid)
+_HELP_QUESTION_RE = re.compile(
+    r"(?:"
+    r"how\s+(?:do|can|to)\s+(?:i|we|one)\s+\w+|"         # how do I / how can I
+    r"where\s+(?:is|are)\s+my\s+\w+|"                      # where is my [thing]
+    r"why\s+(?:is|isn.?t|won.?t|didn.?t|hasn.?t|haven.?t)\s+my|"  # why isn't my
+    r"why\s+(?:is|isn.?t|won.?t)\s+(?:my|the)\s+\w+\s+(?:still|not)|"
+    r"anyone\s+(?:know|help|else\s+having)|"                # anyone know/help
+    r"(?:please|pls)\s+help\s+(?:me|us)|"                  # please help me
+    r"i\s+need\s+(?:help|support|assistance)\s+with|"       # I need help with
+    r"urgent(?:ly)?\s+(?:need|require|please)"              # urgently need
+    r")",
+    re.IGNORECASE,
+)
+
+def _is_complaint(text: str) -> bool:
+    """
+    Returns True if the tweet sounds like a real personal complaint or help request.
+    Requires EITHER:
+      (a) personal pronoun + a problem word — "my withdrawal is stuck"
+      (b) a direct help question about their own situation — "how do I unstake?"
+    """
+    if _HAS_PERSONAL_RE.search(text) and _HAS_PROBLEM_RE.search(text):
+        return True
+    if _HELP_QUESTION_RE.search(text):
+        return True
+    return False
 
 # OFFICIAL URGENT — for official account posts only (exploits, outages, hacks)
 _OFFICIAL_URGENT_RE = re.compile(
@@ -323,9 +353,6 @@ _CAT_HEADER = {
 
 def _is_spam(text: str) -> bool:
     return bool(_SPAM_RE.search(text))
-
-def _is_complaint(text: str) -> bool:
-    return bool(_COMPLAINT_RE.search(text))
 
 def _is_official_urgent(text: str) -> bool:
     return bool(_OFFICIAL_URGENT_RE.search(text))
