@@ -1,21 +1,19 @@
 """
 x_issues_monitor.py
 
-TWO-LAYER scraping approach:
-  Layer 1 — Account tweets: fetch top-level posts from 200+ monitored accounts
-             (protocols, exchanges, wallets, security, communities, all requested networks)
-  Layer 2 — Reply threads: for support/community tweets that attract user complaints,
-             fetch the reply thread via TweetDetail to capture real user messages
-             from ANY account — not just official ones.
+PRIORITY ORDER (what gets sent to Telegram first):
+  1. User complaint replies — random users replying to official posts with issues
+     (staking stuck, tx failed, can't withdraw, asking for help, etc.)
+  2. Official account urgent posts — exploits, outages, hacks from monitored accounts
+  3. Official account trending posts — price news, new listings, governance
 
-Networks covered: ETH, BTC, Solana, BNB, Base, Polygon, Arbitrum, Optimism,
-  Ronin/Axie, LTC, XRP/XRPL, Cosmos, Avalanche subnets, zkSync, Starknet,
-  TON, NEAR, Aptos, Sui, Algorand, Stellar, Cardano, Tron, Fantom, Harmony
+"User complaint replies" are fetched via TweetDetail on the most-engaged official
+tweets. These replies come from ANY user on X — the regular community members
+tagging support and complaining about issues. This is the primary signal.
 
-Issue types caught:
-  URGENT  — stuck tx, can't withdraw, locked funds, staking fails, bridge stuck,
-             wallet drained, exploit/hack, oracle fail, gas error, any "help" request
-  TRENDING — price moves, token news, new listings, governance, airdrops
+Networks: ETH, BTC, Solana, BNB, Base, Polygon, Arbitrum, Optimism, Ronin/Axie,
+          LTC, XRP/XRPL, Cosmos, Avalanche, zkSync, Starknet, TON, NEAR, Sui,
+          Aptos, Algorand, Stellar, Cardano, Tron, Fantom
 """
 from __future__ import annotations
 import re
@@ -24,7 +22,6 @@ import logging
 from typing import Optional
 
 from x_scraper import (
-    fetch_tweets_from_accounts,
     fetch_tweet_replies,
     _make_session,
     _load_creds,
@@ -36,187 +33,152 @@ from x_scraper import (
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Account registry
+# Accounts to monitor — only used as reply-scrape SOURCES
+# We read their tweets so we can then fetch the replies underneath them.
+# The replies (from any random user) are what we actually care about most.
 # ─────────────────────────────────────────────────────────────────────────────
 
 _ACCOUNTS: dict[str, list[str]] = {
 
-    # ── Bitcoin ──────────────────────────────────────────────────────────────
-    "bitcoin": [
-        "saylor", "Strategy", "DocumentingBTC", "BitcoinMagazine", "Bitcoin",
-        "jack", "lopp", "nvk", "pierre_rochard", "BTCFoundation",
-        "bitstamp", "BitcoinCorePR",
+    # ── Exchange support — users tag these with every complaint ───────────────
+    "exchanges": [
+        "BinanceHelpDesk", "binance", "CoinbaseSupport", "coinbase",
+        "Bybit_CS", "Bybit_Official", "KrakenSupport", "krakenfx",
+        "OKXSupport", "OKX", "GateioHelp", "gate_io",
+        "HTXGlobal_Help", "HTX_Global", "BitstampSupport",
+        "CoinExSupport", "KucoinSupport", "mexc_global",
+        "cryptocom_cares", "crypto_com",
     ],
 
-    # ── Ethereum ─────────────────────────────────────────────────────────────
-    "ethereum": [
-        "ethereum", "VitalikButerin", "TimBeiko", "sassal0x",
-        "ultrasoundmoney", "evan_van_ness", "ethstatus",
-        "EF_ESP", "ethdotorg",
+    # ── Wallet / infra support ─────────────────────────────────────────────
+    "wallets": [
+        "MetaMask_Support", "MetaMask", "TrustWalletApp", "TrustWallet",
+        "LedgerSupport", "Ledger", "phantom", "RainbowWallet",
+        "safe", "WalletConnect", "Trezor", "CoinbaseWallet",
+        "AlchemyPlatform", "infura_io", "QuickNode", "Rabby_io",
     ],
 
-    # ── Base (Coinbase L2) ────────────────────────────────────────────────────
-    "base": [
-        "base", "BuildOnBase", "jessepollak", "basename_app",
-        "BaseSwap_fi", "AerodromeFinance", "MorphoLabs",
-    ],
-
-    # ── Arbitrum ─────────────────────────────────────────────────────────────
-    "arbitrum": [
-        "arbitrum", "ArbitrumDAO", "OffchainLabs", "GMX_IO",
-        "camelotdex", "TridentDAO",
-    ],
-
-    # ── Optimism ─────────────────────────────────────────────────────────────
-    "optimism": [
-        "optimismFND", "Optimism", "VelodromeFi",
-        "synthetix_io",
-    ],
-
-    # ── Polygon ──────────────────────────────────────────────────────────────
-    "polygon": [
-        "0xPolygon", "sandeepnailwal", "jdkanani",
-        "QuickswapDEX", "SUSHI",
-    ],
-
-    # ── zkSync / Starknet / other L2 ─────────────────────────────────────────
-    "layer2": [
-        "zksync", "Starknet", "Scroll_ZKP", "LineaBuild",
-        "MetisDAO", "MantaNetwork", "BlastL2", "modenetwork",
-        "xai_games",
-    ],
-
-    # ── Ronin / Axie / Sky Mavis ──────────────────────────────────────────────
-    "ronin": [
-        "Ronin_Network", "AxieInfinity", "SkyMavisHQ",
-        "ronin_wallet", "katana_dex", "roninchain",
-        "Pixels_", "YGG",
-    ],
-
-    # ── Solana ───────────────────────────────────────────────────────────────
-    "solana": [
-        "solana", "SolanaStatus", "SolanaFndn", "solana_devs",
-        "phantom", "JupiterExchange", "solendprotocol",
-        "MangoMarkets", "RaydiumProtocol", "OrcaProtocol",
-        "drift_trade", "MarinadeFinance",
-    ],
-
-    # ── LTC (Litecoin) ───────────────────────────────────────────────────────
-    "litecoin": [
-        "LTCFoundation", "litecoin", "SatoshiLite",
-        "LitecoinCore", "loshan1", "Twitchy_Fingers",
-    ],
-
-    # ── XRP / XRPL ───────────────────────────────────────────────────────────
-    "xrp": [
-        "Ripple", "xrpledger", "BradGarlinghouse", "JoelKatz",
-        "XRPcommunity", "XRP_Productions", "XRPHealthCheck",
-        "xrpl_org", "XUMM_app", "sologenic",
-    ],
-
-    # ── BNB / BSC ────────────────────────────────────────────────────────────
-    "bnb": [
-        "BNBCHAIN", "cz_binance", "binance", "PancakeSwap",
-        "VenusProtocol", "AlpacaFinance", "BabydogeCoin",
-    ],
-
-    # ── Avalanche / Subnets ───────────────────────────────────────────────────
-    "avalanche": [
-        "avalancheavax", "AvaLabs", "BlizzardFund",
-        "BenqiFinance", "traderjoe_xyz", "GMX_IO",
-        "CoreDaoOrg", "dexalot",
-    ],
-
-    # ── Cosmos ecosystem ─────────────────────────────────────────────────────
-    "cosmos": [
-        "cosmos", "cosmoshub", "ibc_protocol",
-        "OsmosisZone", "keplr_wallet", "stride_zone",
-        "neutron_org", "celestia",
-    ],
-
-    # ── TON ──────────────────────────────────────────────────────────────────
-    "ton": [
-        "ton_blockchain", "TonCoin_official", "toncenter",
-        "tonkeeper", "getgems_io",
-    ],
-
-    # ── Other alt-L1 ─────────────────────────────────────────────────────────
-    "altl1": [
-        "Polkadot", "TronFoundation", "SuiNetwork", "aptos_network",
-        "Algorand", "nearprotocol", "Cardano", "StellarOrg",
-        "FantomFDN", "harmonyprotocol", "elrondnetwork",
-    ],
-
-    # ── DeFi protocols ───────────────────────────────────────────────────────
-    "defi": [
-        "DefiLlama", "Uniswap", "AaveAave", "MakerDAO",
-        "CurveFinance", "compoundfinance", "SushiSwap", "BalancerLabs",
-        "dydx", "fraxfinance", "yearnfinance",
-        "dforce_network", "SymbiosisFinance",
-    ],
-
-    # ── Liquid staking / yield ───────────────────────────────────────────────
+    # ── Liquid staking / yield — users complain here about locked stake ────
     "staking": [
         "LidoFinance", "RocketPool", "staderlabs", "ankr",
         "EigenLayer", "ether_fi", "KelpDAO", "StakeWise",
-        "pStake_", "frxETH_", "enzyme_finance",
+        "pStake_", "frxETH_", "MarinadeFinance", "enzyme_finance",
     ],
 
-    # ── Bridges ──────────────────────────────────────────────────────────────
+    # ── Bridges — common source of stuck funds complaints ─────────────────
     "bridges": [
         "StargateFinance", "LayerZero_Core", "HopProtocol",
         "AcrossProtocol", "Connext", "deBridgeFinance",
         "MultichainOrg", "SocketDotTech", "orbiter_finance",
-        "symbiosis_fi",
     ],
 
-    # ── CEX & support handles ─────────────────────────────────────────────────
-    "exchanges": [
-        "binance", "BinanceHelpDesk", "coinbase", "CoinbaseSupport",
-        "Bybit_Official", "Bybit_CS", "krakenfx", "KrakenSupport",
-        "OKX", "OKXSupport", "gate_io", "GateioHelp",
-        "Bitfinex", "BitfinexSupport", "crypto_com", "cryptocom_cares",
-        "mexc_global", "HTX_Global", "HTXGlobal_Help",
-        "BitstampSupport", "CoinExSupport", "KucoinSupport",
+    # ── Ronin / Axie / Sky Mavis ───────────────────────────────────────────
+    "ronin": [
+        "Ronin_Network", "AxieInfinity", "SkyMavisHQ",
+        "ronin_wallet", "roninchain", "katana_dex", "Pixels_",
     ],
 
-    # ── Wallets & infra ──────────────────────────────────────────────────────
-    "wallets": [
-        "MetaMask", "MetaMask_Support", "phantom",
-        "TrustWallet", "TrustWalletApp", "RainbowWallet",
-        "safe", "WalletConnect", "Ledger", "LedgerSupport",
-        "Trezor", "CoinbaseWallet", "AlchemyPlatform",
-        "infura_io", "QuickNode", "Rabby_io",
+    # ── Solana ecosystem ──────────────────────────────────────────────────
+    "solana": [
+        "solana", "SolanaStatus", "phantom",
+        "JupiterExchange", "solendprotocol", "MangoMarkets",
+        "RaydiumProtocol", "OrcaProtocol", "drift_trade",
     ],
 
-    # ── Security / exploit alerts ────────────────────────────────────────────
+    # ── LTC ────────────────────────────────────────────────────────────────
+    "litecoin": [
+        "LTCFoundation", "litecoin", "LitecoinCore", "SatoshiLite",
+    ],
+
+    # ── XRP / XRPL ────────────────────────────────────────────────────────
+    "xrp": [
+        "xrpledger", "Ripple", "XRPcommunity", "XRPHealthCheck",
+        "xrpl_org", "XUMM_app", "sologenic",
+    ],
+
+    # ── Base ──────────────────────────────────────────────────────────────
+    "base": [
+        "base", "BuildOnBase", "jessepollak", "AerodromeFinance",
+        "MorphoLabs", "BaseSwap_fi",
+    ],
+
+    # ── Arbitrum ──────────────────────────────────────────────────────────
+    "arbitrum": [
+        "arbitrum", "GMX_IO", "camelotdex",
+    ],
+
+    # ── Optimism ──────────────────────────────────────────────────────────
+    "optimism": [
+        "optimismFND", "Optimism", "VelodromeFi", "synthetix_io",
+    ],
+
+    # ── Polygon ───────────────────────────────────────────────────────────
+    "polygon": [
+        "0xPolygon", "QuickswapDEX",
+    ],
+
+    # ── Other L2 / ZK ─────────────────────────────────────────────────────
+    "layer2": [
+        "zksync", "Starknet", "Scroll_ZKP", "LineaBuild",
+        "MetisDAO", "BlastL2", "modenetwork",
+    ],
+
+    # ── BNB / BSC ─────────────────────────────────────────────────────────
+    "bnb": [
+        "BNBCHAIN", "binance", "PancakeSwap", "VenusProtocol",
+    ],
+
+    # ── Avalanche / Subnets ───────────────────────────────────────────────
+    "avalanche": [
+        "avalancheavax", "AvaLabs", "BenqiFinance",
+        "traderjoe_xyz", "CoreDaoOrg", "dexalot",
+    ],
+
+    # ── Ethereum / DeFi ───────────────────────────────────────────────────
+    "ethereum": [
+        "ethereum", "ethstatus", "AaveAave", "Uniswap",
+        "MakerDAO", "CurveFinance", "compoundfinance",
+    ],
+
+    # ── Cosmos ────────────────────────────────────────────────────────────
+    "cosmos": [
+        "cosmos", "OsmosisZone", "keplr_wallet", "stride_zone",
+        "neutron_org",
+    ],
+
+    # ── TON ───────────────────────────────────────────────────────────────
+    "ton": [
+        "ton_blockchain", "tonkeeper",
+    ],
+
+    # ── Other alt-L1 ──────────────────────────────────────────────────────
+    "altl1": [
+        "Polkadot", "SuiNetwork", "aptos_network",
+        "nearprotocol", "StellarOrg", "TronFoundation",
+        "Cardano", "Algorand",
+    ],
+
+    # ── Security / exploit alert ───────────────────────────────────────────
     "security": [
         "PeckShieldAlert", "BeosinAlert", "BlockSecTeam",
-        "CertiKCommunity", "officer_cia", "SlowMist_Team",
-        "hackenclub", "immunefi", "AnciliaInc",
-        "CryptoSecHub", "tayvano_", "0xfoobar",
-        "Mudit__Gupta", "samczsun",
+        "CertiKCommunity", "SlowMist_Team", "immunefi",
+        "AnciliaInc", "tayvano_", "samczsun", "Mudit__Gupta",
     ],
 
-    # ── Market / news aggregators ────────────────────────────────────────────
+    # ── News / market — for trending posts ────────────────────────────────
     "market": [
         "WatcherGuru", "lookonchain", "whale_alert",
-        "CryptoCapo_", "TheBlock__", "CoinDesk",
-        "Cointelegraph", "decrypt_co", "rektHQ",
-        "DeFiant_", "unchainedcrypto", "CryptoSlate",
-        "CryptoNewsIO", "coincodecap",
+        "CoinDesk", "Cointelegraph", "rektHQ", "DeFiant_",
+        "DefiLlama",
     ],
 
-    # ── Community & issue aggregators ────────────────────────────────────────
-    "community": [
-        "CryptoWhale", "bantg", "MrBadCrypto",
-        "cryptomanran", "Excellion", "BitcoinFear",
-        "crypto_birb", "GordonGoner", "Cobie",
-        "DeFiGod1", "Route2FI",
+    # ── Bitcoin ────────────────────────────────────────────────────────────
+    "bitcoin": [
+        "saylor", "BitcoinMagazine", "Bitcoin", "jack", "lopp",
     ],
 }
 
-# Flat deduped account list
+# Flat deduped list
 _ALL_ACCOUNTS: list[str] = []
 _seen_set: set[str] = set()
 for _accs in _ACCOUNTS.values():
@@ -231,99 +193,89 @@ for _cat, _accs in _ACCOUNTS.items():
     for _a in _accs:
         _ACCOUNT_TO_CAT[_a.lower()] = _cat
 
-# Accounts whose reply threads are most likely to contain user complaints.
-# We will call TweetDetail on their recent tweets to surface replies from any user.
-_REPLY_SCRAPE_ACCOUNTS = {
-    # Exchange support — users tag these with complaints
-    "binancehelpdesk", "coinbasesupport", "bybit_cs", "krakensupport",
-    "okxsupport", "gateiohelp", "htxglobal_help", "bitstampsupport",
-    "coinexsupport", "kucoinsupport", "cryptocom_cares",
-    # Wallet support
-    "metamask_support", "trustwalletapp", "ledgersupport",
-    # Protocol accounts where users complain in replies
-    "metamask", "lido finance", "rocketpool", "eigenlayer",
-    "lidofinance", "aaveaave", "uniswap",
-    # Network status accounts
-    "solanastatus", "ethstatus", "ronin_network",
-    # Security — users report hacks/losses in replies
-    "peckshieldalert", "blockSecteam", "immunefi",
-}
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Keyword patterns
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CASHTAG_RE = re.compile(r"\$[A-Z]{2,10}\b")
 
-# URGENT — always forward regardless of likes count
-_URGENT_RE = re.compile(
+# USER COMPLAINT — any of these in a reply = this is a user reporting a problem.
+# Intentionally broad: we want to catch any complaint, even vague ones.
+_COMPLAINT_RE = re.compile(
     r"\b("
-    # Generic distress
-    r"help|need help|please help|can.?t|cannot|anyone know|anyone help|"
-    r"support ticket|no response|not working|broken|down|outage|"
-    # Transaction issues
-    r"stuck|pending forever|failed|revert|reverted|transaction fail|tx fail|"
-    r"tx.?stuck|stuck.?tx|won.?t process|not.?credited|missing fund|lost fund|"
-    r"fund.?gone|funds gone|can.?t withdraw|withdrawal.?fail|deposit.?fail|"
-    r"withdraw.?stuck|deposit.?stuck|"
+    # Distress / help requests
+    r"help|please help|need help|anyone help|can.?t|cannot|not working|"
+    r"not able|unable|no response|still waiting|waiting for|support ticket|"
+    r"contacted|reached out|no reply|ignoring|"
+    # Transaction / fund issues
+    r"stuck|pending|failed|revert|reverted|not.?credited|missing|lost|gone|"
+    r"can.?t withdraw|withdrawal|deposit.?fail|not.?received|not.?showing|"
+    r"didn.?t arrive|never arrived|"
     # Staking / yield
-    r"can.?t unstake|unstaking.?fail|staking.?issue|staking.?stuck|"
-    r"locked.?stake|stake.?lock|validator.?slash|slash|penalt|"
-    r"yield.?drop|yield.?gone|reward.?miss|reward.?not|apy.?wrong|"
-    r"not receiving reward|reward.?delay|"
-    # Locked / frozen funds
-    r"fund.?lock|lock.?fund|account.?lock|lock.?account|wallet.?block|"
-    r"frozen|freeze|suspend|access.?denied|can.?t access|"
-    r"asset.?lock|balance.?wrong|balance.?missing|"
-    # Protocol / exchange issues
-    r"exploit|hack|hacked|rug|rug.?pull|vulnerability|vuln|"
-    r"emergency|paused|circuit.?breaker|"
-    r"bug|glitch|wrong price|price.?error|oracle.?fail|liquidat|"
-    r"withdraw.?disabl|deposit.?disabl|trading.?halt|maintenance|"
-    r"error code|getting error|error message|"
-    # Bridge issues
-    r"bridge.?stuck|bridge.?fail|cross.?chain.?fail|relayer|"
-    r"message.?fail|transfer.?stuck|bridging.?issue|"
-    # Wallet / gas / approval
-    r"gas.?spike|gas.?too.?high|gas.?error|nonce.?error|"
-    r"wallet.?drain|approval.?issue|infinite.?approval|"
-    r"seed.?phrase|private.?key.?stolen|phish|address.?poison|"
-    r"scam.?alert|warn.?everyone|"
-    # Specific network issues
-    r"ronin.?issue|ronin.?down|ronin.?stuck|"
-    r"ltc.?issue|litecoin.?stuck|"
-    r"xrp.?issue|xrpl.?error|ripple.?issue|"
-    r"solana.?down|solana.?outage|sol.?issue|"
-    r"base.?issue|base.?down|base.?stuck|"
-    r"subnet.?issue|subnet.?down"
+    r"unstake|unstaking|staking.?issue|locked|stake.?lock|"
+    r"yield|apy|reward|not.?earning|earning.?nothing|"
+    r"validator|slash|penalt|"
+    # Locked / frozen
+    r"frozen|freeze|suspend|account.?lock|lock|access|"
+    r"can.?t access|blocked|banned|"
+    # Money / fund issues
+    r"fund|balance|money|amount|token|coin|"
+    r"wrong amount|wrong balance|overcharged|charged.?twice|"
+    # Bridge / cross-chain
+    r"bridge|bridging|cross.?chain|transfer|"
+    # Wallet / gas
+    r"gas|nonce|approval|signature|"
+    r"wallet|address|"
+    # Error language
+    r"error|bug|glitch|issue|problem|broken|"
+    r"why.?is|what.?happened|what.?is.?going|"
+    # General complaint language
+    r"horrible|terrible|worst|scam|rip.?off|"
+    r"refund|compensation|"
+    # Network-specific issue language
+    r"ronin|litecoin|ltc|xrp|xrpl|solana|sol|base|subnet|"
+    r"arbitrum|optimism|polygon|zksync|bnb|bsc"
     r")\b",
     re.IGNORECASE,
 )
 
-# TRENDING — crypto news / market moves
+# OFFICIAL URGENT — for official account posts only (exploits, outages, hacks)
+_OFFICIAL_URGENT_RE = re.compile(
+    r"\b("
+    r"exploit|hack|hacked|rug|rug.?pull|vulnerability|vuln|"
+    r"emergency|paused|circuit.?breaker|incident|outage|down|"
+    r"warning|alert|caution|critical|"
+    r"drained|stolen|breach|"
+    r"maintenance|degraded|investigating"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# TRENDING — for official account posts (news, price, listings)
 _TRENDING_RE = re.compile(
     r"\b("
     r"bitcoin|ethereum|solana|bnb|crypto|defi|nft|token|blockchain|"
-    r"ronin|litecoin|ltc|xrp|xrpl|ripple|cardano|ada|"
-    r"altcoin|staking|yield|protocol|layer2|l2|rollup|subnet|"
-    r"dex|cex|wallet|listing|launch|upgrade|fork|halving|etf|"
-    r"btc|eth|sol|usdt|usdc|matic|avax|dot|doge|shib|pepe|"
-    r"trending|ath|all.time.high|pump|breakout|bull|bear|"
-    r"airdrop|snapshot|governance|vote|proposal|whale|"
+    r"ronin|litecoin|ltc|xrp|xrpl|"
+    r"staking|yield|protocol|layer2|l2|rollup|subnet|"
+    r"dex|listing|launch|upgrade|fork|halving|etf|"
+    r"btc|eth|sol|usdt|usdc|matic|avax|xrp|doge|"
+    r"trending|ath|pump|breakout|bull|bear|"
+    r"airdrop|governance|vote|whale|"
     r"just.in|breaking|alert|just.announced"
     r")\b",
     re.IGNORECASE,
 )
 
-# Spam — hard exclude
+# Spam — always exclude
 _SPAM_RE = re.compile(
     r"\b("
-    r"giveaway|give away|free.?token|token.?free|claim your|"
+    r"giveaway|give away|free.?token|claim your|"
     r"100x guaranteed|follow.?win|retweet.?win|rt.?win|"
     r"dm for.?profit|signal.?group|vip.?signal|"
-    r"ngl\.link|t\.me/\+|join.?channel|referral.?code|"
-    r"contact.?admin|contact.?support.?dm|"
-    r"get back your|recover your|fund.?recover"
+    r"t\.me/\+|join.?channel|referral.?code|"
+    r"get back your|recover your|fund.?recover|"
+    r"contact.?recovery|recovery.?agent|"
+    r"i lost.* and got it back|i was scammed.* and recovered"
     r")\b",
     re.IGNORECASE,
 )
@@ -333,30 +285,28 @@ _SPAM_RE = re.compile(
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CAT_HEADER = {
-    "bitcoin":   "₿  BITCOIN",
-    "ethereum":  "⟠  ETHEREUM",
+    "exchanges": "🏛️ EXCHANGE",
+    "wallets":   "👛 WALLET",
+    "staking":   "🔒 STAKING / YIELD",
+    "bridges":   "🌉 BRIDGE",
+    "ronin":     "🎮 RONIN / AXIE",
+    "solana":    "◎  SOLANA",
+    "litecoin":  "Ł  LITECOIN",
+    "xrp":       "✕  XRP / XRPL",
     "base":      "🔵 BASE",
     "arbitrum":  "🔵 ARBITRUM",
     "optimism":  "🔴 OPTIMISM",
     "polygon":   "🟣 POLYGON",
     "layer2":    "⚡ LAYER-2",
-    "ronin":     "🎮 RONIN / AXIE",
-    "solana":    "◎  SOLANA",
-    "litecoin":  "Ł  LITECOIN",
-    "xrp":       "✕  XRP / XRPL",
     "bnb":       "🟡 BNB CHAIN",
     "avalanche": "🔺 AVALANCHE",
+    "ethereum":  "⟠  ETHEREUM / DEFI",
     "cosmos":    "⚛️  COSMOS",
     "ton":       "💎 TON",
     "altl1":     "🔵 ALT-CHAIN",
-    "defi":      "🏦 DEFI",
-    "staking":   "🔒 STAKING / YIELD",
-    "bridges":   "🌉 BRIDGE",
-    "exchanges": "🏛️ EXCHANGE",
-    "wallets":   "👛 WALLET",
     "security":  "🚨 SECURITY",
     "market":    "📊 MARKET",
-    "community": "💬 COMMUNITY",
+    "bitcoin":   "₿  BITCOIN",
     "misc":      "🔥 CRYPTO",
 }
 
@@ -368,14 +318,14 @@ _CAT_HEADER = {
 def _is_spam(text: str) -> bool:
     return bool(_SPAM_RE.search(text))
 
+def _is_complaint(text: str) -> bool:
+    return bool(_COMPLAINT_RE.search(text))
 
-def _is_urgent(text: str) -> bool:
-    return bool(_URGENT_RE.search(text))
-
+def _is_official_urgent(text: str) -> bool:
+    return bool(_OFFICIAL_URGENT_RE.search(text))
 
 def _is_trending(text: str) -> bool:
     return bool(_CASHTAG_RE.search(text) or _TRENDING_RE.search(text))
-
 
 def extract_tokens(text: str) -> list[str]:
     seen, out = set(), []
@@ -385,31 +335,16 @@ def extract_tokens(text: str) -> list[str]:
             out.append(t)
     return out
 
-
-def _guess_category(user: str) -> str:
+def _cat_from_user(user: str) -> str:
     return _ACCOUNT_TO_CAT.get(user.lower(), "misc")
 
-
-def _make_entry(tw: dict, urgent: bool, is_reply: bool = False) -> dict:
-    user = tw.get("user", "")
-    tid  = tw.get("id", "")
-    return {
-        "category": _guess_category(user),
-        "tweet_id": tid,
-        "text":     tw.get("text", "")[:500],
-        "url":      tw.get("url", "") or (f"https://x.com/{user}/status/{tid}" if tid else ""),
-        "date":     tw.get("date", ""),
-        "user":     user,
-        "likes":    tw.get("likes", 0),
-        "retweets": tw.get("retweets", 0),
-        "tokens":   extract_tokens(tw.get("text", "")),
-        "urgent":   urgent,
-        "is_reply": is_reply,
-    }
+def _cat_from_parent(parent_user: str) -> str:
+    """Derive category from the account being replied to."""
+    return _ACCOUNT_TO_CAT.get(parent_user.lower(), "misc")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main fetch
+# Main fetch — three buckets, user complaints always first
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_issues(
@@ -417,32 +352,37 @@ def fetch_issues(
     per_account: int = 20,
 ) -> list[dict]:
     """
-    Two-layer scrape:
-      Layer 1 — top-level tweets from all monitored accounts
-      Layer 2 — reply threads on support/community tweets (captures ANY user's complaint)
+    Fetch and classify crypto content from X.
 
-    Returns: urgent items first (no engagement floor), then trending sorted by engagement.
+    Returns THREE buckets merged in priority order:
+      Bucket A — user_complaint replies (highest priority)
+                 Any user replying under official posts with complaint language.
+                 These are the community members asking for help / reporting issues.
+      Bucket B — official account urgent posts (second)
+                 Exploits, outages, hacks from monitored accounts.
+      Bucket C — official account trending posts (last)
+                 Price news, listings, governance, market moves.
     """
     seen_ids = seen_ids or set()
 
-    # ── Layer 1: account tweets ───────────────────────────────────────────────
     auth, ct0 = _load_creds()
     if not auth or not ct0:
         logging.warning("x_issues_monitor: no credentials")
         return []
 
-    session = _make_session(auth, ct0)
-    cache   = _load_user_id_cache()
+    session  = _make_session(auth, ct0)
+    cache    = _load_user_id_cache()
+    cutoff   = time.time() - 48 * 3600
 
-    raw_tweets: list[dict] = []
-    global_seen: set[str]  = set(seen_ids)
+    # ── Step 1: Fetch official account tweets ─────────────────────────────
+    official_tweets: list[dict] = []  # (tweet dict with extra "source_cat" key)
+    global_seen: set[str] = set(seen_ids)
 
     for screen_name in _ALL_ACCOUNTS:
         uid = get_user_id(screen_name, session, cache)
         if not uid:
             continue
         tweets = fetch_user_tweets(uid, screen_name, session, count=per_account)
-        cutoff = time.time() - 48 * 3600
         for t in tweets:
             tid = t.get("id", "")
             if not tid or tid in global_seen:
@@ -453,27 +393,27 @@ def fetch_issues(
             if not t.get("user"):
                 t["user"] = screen_name
             t["url"] = f"https://x.com/{t['user']}/status/{tid}"
+            t["source_cat"] = _cat_from_user(t["user"])
             global_seen.add(tid)
-            raw_tweets.append(t)
+            official_tweets.append(t)
         time.sleep(0.4)
 
-    # ── Layer 2: reply threads on support/community tweets ───────────────────
-    # Pick tweets from accounts whose threads attract user complaints, then
-    # fetch replies — these are real user messages from ANY account on X.
-    reply_source_tweets = [
-        t for t in raw_tweets
-        if t.get("user", "").lower() in _REPLY_SCRAPE_ACCOUNTS
-        or _is_urgent(t.get("text", ""))  # also expand threads on urgent posts
-    ]
-    # Limit to avoid hammering the API — take the 15 most recent
-    reply_source_tweets = sorted(
-        reply_source_tweets,
-        key=lambda t: _parse_twitter_date(t.get("date", "")),
+    # ── Step 2: Fetch reply threads ────────────────────────────────────────
+    # For each official tweet, use TweetDetail to get replies from ANY user.
+    # Sort by most replies/engagement first (those attract the most user complaints).
+    # Cap at 40 source tweets to control API usage.
+    reply_sources = sorted(
+        official_tweets,
+        key=lambda t: t.get("likes", 0) + t.get("retweets", 0),
         reverse=True,
-    )[:15]
+    )[:40]
 
-    for src in reply_source_tweets:
-        src_id = src.get("id", "")
+    user_reply_tweets: list[dict] = []  # replies from random community users
+
+    for src in reply_sources:
+        src_id  = src.get("id", "")
+        src_cat = src.get("source_cat", "misc")
+        src_user = src.get("user", "")
         if not src_id:
             continue
         replies = fetch_tweet_replies(src_id, session, max_age_hours=48)
@@ -481,46 +421,99 @@ def fetch_issues(
             rid = r.get("id", "")
             if not rid or rid in global_seen:
                 continue
-            if not r.get("user"):
+            r_user = r.get("user", "")
+            if not r_user:
+                continue
+            # Skip if the reply is from the same official account (self-replies)
+            if r_user.lower() == src_user.lower():
                 continue
             global_seen.add(rid)
-            raw_tweets.append(r)
+            # Tag with context: who they're replying to
+            r["reply_to_user"] = src_user
+            r["reply_to_cat"]  = src_cat
+            r["url"]           = f"https://x.com/{r_user}/status/{rid}"
+            user_reply_tweets.append(r)
         time.sleep(0.4)
 
     _save_user_id_cache(cache)
 
-    # ── Classify ──────────────────────────────────────────────────────────────
-    urgent:   list[dict] = []
-    trending: list[dict] = []
+    # ── Step 3: Classify ──────────────────────────────────────────────────
 
-    for tw in raw_tweets:
-        text = tw.get("text", "")
-        tid  = tw.get("id", "")
+    bucket_a: list[dict] = []  # user complaint replies  ← PRIORITY
+    bucket_b: list[dict] = []  # official urgent
+    bucket_c: list[dict] = []  # official trending
+
+    # --- Process user reply tweets (Bucket A) ---
+    for t in user_reply_tweets:
+        text = t.get("text", "")
+        tid  = t.get("id", "")
         if not text or tid in seen_ids:
             continue
         if _is_spam(text):
             continue
+        # Accept: any complaint language OR any crypto-relevant content
+        # (in a reply context, even light mentions are worth surfacing)
+        if not (_is_complaint(text) or _is_trending(text) or _CASHTAG_RE.search(text)):
+            continue
+        bucket_a.append({
+            "type":          "user_complaint",
+            "category":      t.get("reply_to_cat", "misc"),
+            "reply_to_user": t.get("reply_to_user", ""),
+            "tweet_id":      tid,
+            "text":          text[:500],
+            "url":           t.get("url", ""),
+            "date":          t.get("date", ""),
+            "user":          t.get("user", ""),
+            "likes":         t.get("likes", 0),
+            "retweets":      t.get("retweets", 0),
+            "tokens":        extract_tokens(text),
+            "urgent":        _is_complaint(text),
+        })
 
-        is_reply = tw.get("is_reply", False)
-        if _is_urgent(text):
-            urgent.append(_make_entry(tw, urgent=True, is_reply=is_reply))
+    # --- Process official account tweets (Buckets B + C) ---
+    for t in official_tweets:
+        text = t.get("text", "")
+        tid  = t.get("id", "")
+        if not text or tid in seen_ids:
+            continue
+        if _is_spam(text):
+            continue
+        entry = {
+            "type":          "official",
+            "category":      t.get("source_cat", "misc"),
+            "reply_to_user": "",
+            "tweet_id":      tid,
+            "text":          text[:500],
+            "url":           t.get("url", ""),
+            "date":          t.get("date", ""),
+            "user":          t.get("user", ""),
+            "likes":         t.get("likes", 0),
+            "retweets":      t.get("retweets", 0),
+            "tokens":        extract_tokens(text),
+            "urgent":        _is_official_urgent(text),
+        }
+        if _is_official_urgent(text):
+            bucket_b.append(entry)
         elif _is_trending(text):
-            trending.append(_make_entry(tw, urgent=False, is_reply=is_reply))
+            bucket_c.append(entry)
 
-    # Sort: urgent by date (newest first), trending by engagement
-    urgent.sort(  key=lambda x: _parse_twitter_date(x.get("date", "")), reverse=True)
-    trending.sort(key=lambda x: x["likes"] + x["retweets"], reverse=True)
+    # Sort each bucket
+    # A: complaint replies — most recent first (issues are time-sensitive)
+    bucket_a.sort(key=lambda x: _parse_twitter_date(x.get("date", "")), reverse=True)
+    # B: official urgent — by engagement
+    bucket_b.sort(key=lambda x: x["likes"] + x["retweets"], reverse=True)
+    # C: official trending — by engagement
+    bucket_c.sort(key=lambda x: x["likes"] + x["retweets"], reverse=True)
 
-    return urgent + trending
+    return bucket_a + bucket_b + bucket_c
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Async wrapper (backward compat)
+# Async wrapper
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def afetch_issues(
-    scraper=None,
-    categories=None,
+    scraper=None, categories=None,
     seen_ids: Optional[set] = None,
     per_query_count: int = 20,
 ) -> list[dict]:
@@ -536,36 +529,39 @@ async def afetch_issues(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def format_issue_for_telegram(item: dict) -> str:
-    cat      = item.get("category", "misc")
-    urgent   = item.get("urgent", False)
-    is_reply = item.get("is_reply", False)
-    header   = _CAT_HEADER.get(cat, "🔥 CRYPTO")
-    text     = item.get("text", "")
-    url      = item.get("url", "")
-    date     = item.get("date", "")
-    user     = item.get("user", "")
-    tokens   = item.get("tokens", [])
-    likes    = item.get("likes", 0)
-    rts      = item.get("retweets", 0)
-
-    if urgent:
-        prefix = "🆘"
-    elif is_reply:
-        prefix = "💬"
-    else:
-        prefix = "📌"
+    itype      = item.get("type", "official")
+    cat        = item.get("category", "misc")
+    urgent     = item.get("urgent", False)
+    reply_to   = item.get("reply_to_user", "")
+    header     = _CAT_HEADER.get(cat, "🔥 CRYPTO")
+    text       = item.get("text", "")
+    url        = item.get("url", "")
+    date       = item.get("date", "")
+    user       = item.get("user", "")
+    tokens     = item.get("tokens", [])
+    likes      = item.get("likes", 0)
+    rts        = item.get("retweets", 0)
 
     def esc(s: str) -> str:
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+    # Choose prefix based on type and urgency
+    if itype == "user_complaint":
+        prefix = "🆘" if urgent else "💬"
+    elif urgent:
+        prefix = "⚠️"
+    else:
+        prefix = "📌"
+
     lines = [f"{prefix} <b>{header}</b>"]
 
-    tok_line = " ".join(f"<b>{esc(t)}</b>" for t in tokens[:6])
+    tok_line = " ".join(f"<b>{esc(t)}</b>" for t in tokens[:5])
     if tok_line:
         lines.append(tok_line)
 
-    if is_reply:
-        lines.append("↩️ <i>user reply</i>")
+    # For user complaint replies, show who they're replying to (context)
+    if itype == "user_complaint" and reply_to:
+        lines.append(f'↩️ replying to <a href="https://x.com/{reply_to}">@{esc(reply_to)}</a>')
 
     if user:
         lines.append(f'👤 <a href="https://x.com/{user}">@{esc(user)}</a>')
