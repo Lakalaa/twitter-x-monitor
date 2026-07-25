@@ -614,9 +614,11 @@ def _save_xissues_seen(seen: set):
 
 def run_xissues_check_sync():
     """
-    Fetch recent tweets from curated top crypto X accounts and post
-    crypto-relevant ones to Telegram. Runs every 45 minutes.
-    Uses direct UserTweets GraphQL endpoint (no Scweet needed).
+    Two-layer X/Twitter scrape every 15 minutes:
+      Layer 1 — top-level tweets from 200+ monitored accounts
+      Layer 2 — reply threads on support posts via TweetDetail
+                (captures complaints from ANY user, not just official accounts)
+    Posts urgent issues immediately, then trending content. Never stops.
     """
     try:
         import sys as _sys
@@ -625,20 +627,28 @@ def run_xissues_check_sync():
         from x_issues_monitor import fetch_issues, format_issue_for_telegram
 
         seen_ids = _load_xissues_seen()
-        add_log("X issues monitor: fetching tweets from curated crypto accounts…")
-        items = fetch_issues(seen_ids=seen_ids, per_account=15)
-        add_log(f"X issues monitor: {len(items)} new crypto tweet(s)")
+        urgent_count   = sum(1 for i in seen_ids if True)  # just for log reference
+        add_log("X issues monitor: scanning accounts + reply threads for crypto issues…")
+        items = fetch_issues(seen_ids=seen_ids, per_account=20)
 
-        for it in items[:20]:
+        urgent   = [i for i in items if i.get("urgent")]
+        trending = [i for i in items if not i.get("urgent")]
+        add_log(f"X issues monitor: {len(urgent)} urgent + {len(trending)} trending new item(s)")
+
+        sent = 0
+        for it in items[:50]:   # post up to 50 per cycle
             try:
                 msg = format_issue_for_telegram(it)
                 asyncio.run(tb.send_message(msg, parse_mode="HTML",
                                             disable_web_page_preview=False))
                 seen_ids.add(it.get("tweet_id", ""))
-                time.sleep(1)
+                sent += 1
+                time.sleep(1.5)
             except Exception as e:
                 add_log(f"X issues post error: {e}")
 
+        if sent:
+            add_log(f"X issues monitor: sent {sent} message(s) to Telegram")
         _save_xissues_seen(seen_ids)
 
     except Exception as e:
@@ -671,11 +681,11 @@ def start_scheduler():
     # intentionally NOT scheduled — user wants Telegram alerts sourced only
     # from live X/Twitter activity, not third-party news aggregators.
     schedule.every(30).minutes.do(run_feed_check_sync)
-    schedule.every(45).minutes.do(run_xissues_check_sync)
+    schedule.every(15).minutes.do(run_xissues_check_sync)
     # Run once immediately on startup
     threading.Thread(target=run_feed_check_sync, daemon=True).start()
     threading.Thread(target=run_xissues_check_sync, daemon=True).start()
-    add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 45 min (crypto-news auto-post disabled)")
+    add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 15 min (accounts + reply threads)")
     while STATE["running"]:
         schedule.run_pending()
         time.sleep(15)
