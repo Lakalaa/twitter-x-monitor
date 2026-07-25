@@ -627,16 +627,16 @@ def run_xissues_check_sync():
         from x_issues_monitor import fetch_issues, format_issue_for_telegram
 
         seen_ids = _load_xissues_seen()
-        urgent_count   = sum(1 for i in seen_ids if True)  # just for log reference
-        add_log("X issues monitor: scanning accounts + reply threads for crypto issues…")
+        add_log("X issues monitor: scanning for real user complaints…")
         items = fetch_issues(seen_ids=seen_ids, per_account=20)
 
-        urgent   = [i for i in items if i.get("urgent")]
-        trending = [i for i in items if not i.get("urgent")]
-        add_log(f"X issues monitor: {len(urgent)} urgent + {len(trending)} trending new item(s)")
+        # ONLY send real user complaints — no official posts, no market news, no adverts
+        complaints = [i for i in items if i.get("type") == "user_complaint"]
+        skipped = len(items) - len(complaints)
+        add_log(f"X issues monitor: {len(complaints)} user complaint(s) found ({skipped} non-complaint items skipped)")
 
         sent = 0
-        for it in items[:50]:   # post up to 50 per cycle
+        for it in complaints[:30]:   # up to 30 real complaints per cycle
             try:
                 msg = format_issue_for_telegram(it)
                 asyncio.run(tb.send_message(msg, parse_mode="HTML",
@@ -648,7 +648,7 @@ def run_xissues_check_sync():
                 add_log(f"X issues post error: {e}")
 
         if sent:
-            add_log(f"X issues monitor: sent {sent} message(s) to Telegram")
+            add_log(f"X issues monitor: sent {sent} real user complaint(s) to Telegram")
         _save_xissues_seen(seen_ids)
 
     except Exception as e:
@@ -681,11 +681,11 @@ def start_scheduler():
     # intentionally NOT scheduled — user wants Telegram alerts sourced only
     # from live X/Twitter activity, not third-party news aggregators.
     schedule.every(30).minutes.do(run_feed_check_sync)
-    schedule.every(15).minutes.do(run_xissues_check_sync)
+    schedule.every(5).minutes.do(run_xissues_check_sync)
     # Run once immediately on startup
     threading.Thread(target=run_feed_check_sync, daemon=True).start()
     threading.Thread(target=run_xissues_check_sync, daemon=True).start()
-    add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 15 min (accounts + reply threads)")
+    add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 5 min (user complaints only)")
     while STATE["running"]:
         schedule.run_pending()
         time.sleep(15)
