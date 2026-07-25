@@ -118,9 +118,13 @@ def _find_tweets(obj, found=None):
             legacy = obj.get("legacy", {})
             text = legacy.get("full_text", "")
             if text and not text.startswith("RT "):
-                # screen_name lives in core.user_results.result.core
+                # UserTweets: screen_name at result.core.screen_name
+                # TweetDetail: screen_name at result.legacy.screen_name (core is empty)
                 ur = obj.get("core", {}).get("user_results", {}).get("result", {})
-                screen_name = ur.get("core", {}).get("screen_name", "")
+                screen_name = (
+                    ur.get("core", {}).get("screen_name", "")
+                    or ur.get("legacy", {}).get("screen_name", "")
+                )
                 found.append({
                     "id":       obj.get("rest_id", ""),
                     "text":     text,
