@@ -325,6 +325,111 @@ _ACCOUNTS: dict[str, list[str]] = {
     "bitcoin": [
         "saylor", "BitcoinMagazine", "Bitcoin", "jack", "lopp",
     ],
+
+    # ── Perp / derivatives DEXes — users lose $ on liquidations/errors ───
+    "perp_dex": [
+        "HyperliquidX", "driftprotocol", "dYdX", "GainsNetwork",
+        "LevelFinance_", "MuxProtocol", "VertexProtocol",
+        "KwentaEN", "SynFuturesDefi", "orderly_network",
+        "aevo_xyz", "RabbitXdex", "ParadigmFi",
+        "JuicedMarkets", "Vela_Exchange",
+    ],
+
+    # ── RWA / on-chain credit — stuck redemptions, yield issues ──────────
+    "rwa": [
+        "maplefinance", "GoldfinchFi", "centrifuge",
+        "OndoFinance", "MtnProtocol", "usualmoney",
+        "Superstate_co", "OpenEden_io", "TProtocol_fi",
+        "backed_fi", "AngleMoney", "TrueFi_io",
+    ],
+
+    # ── More ETH DeFi — lending, yield, options ───────────────────────────
+    "eth_defi": [
+        "EthenaLabs", "PrismaFinance", "MorphoLabs",
+        "PendleFinance", "convex_finance", "iearnfinance",
+        "EulerFinance", "SiloFinance", "FluidProtocol",
+        "ionicmoney", "gearboxprotocol", "term_finance",
+        "AladdinDAO", "ClearpoolFin", "AjnaProtocol",
+    ],
+
+    # ── Meme coins (ETH/Base/multi-chain) ─────────────────────────────────
+    "meme_eth": [
+        "pepecoineth", "base_brett", "mog_coin",
+        "TurboToadToken", "MemeCoinETH", "SaitamaToken",
+        "ShibaInu_ETH", "elongate_official", "dogelon",
+        "HarryPotterObama", "COQinuToken",
+    ],
+
+    # ── More gaming tokens — P2E, guilds, metaverse ───────────────────────
+    "gaming2": [
+        "Beam_gg", "MythicalGames", "PlayCarv",
+        "TreasureDAO", "HeroesOfMavia", "ParallelNFT",
+        "PixelmonNFT", "BigTimeStudios", "XBorgApp",
+        "GuildFi", "YGG_DAO", "PlanetMojo_",
+        "EV_io_game", "SuperverseNFT",
+    ],
+
+    # ── SocialFi / DeSo ───────────────────────────────────────────────────
+    "socialfi": [
+        "farcaster", "lens_protocol", "jokerace_",
+        "orb_club", "phaver_app", "cyberconnect",
+        "SocialLayerApp", "DSCVR_one", "Chingari_app",
+    ],
+
+    # ── Restaking / EigenLayer ecosystem ──────────────────────────────────
+    "restaking": [
+        "EigenLayer", "ether_fi", "KelpDAO",
+        "puffer_finance", "RenzoProtocol", "swell_l2",
+        "YieldNestFi", "InceptionLRT", "bedrock_defi",
+        "omni_network", "AltLayerOfficial",
+    ],
+
+    # ── More wallets / infra ──────────────────────────────────────────────
+    "wallets2": [
+        "BackpackApp", "FrontierApp", "OneinchNetwork",
+        "EnkryptWallet", "frame_eth", "ambire_wallet",
+        "okx_wallet", "safepal_io", "gridplus_io",
+        "KeystoneHQ", "CoolBitXHQ", "neon_wallet",
+    ],
+
+    # ── Emerging CEXes — smaller exchanges, more support complaints ───────
+    "cex2": [
+        "Phemex_official", "BingXOfficial", "AscendEX_Global",
+        "LBank_Exchange", "BitgetWallet", "DigiFinexGlobal",
+        "CoinWOfficial", "XT_com", "ProBit_Exchange",
+        "Deepcoin_Com", "BitMart_Official", "IndodaxCom",
+    ],
+
+    # ── Stablecoin issuers — depegs, redemption issues ────────────────────
+    "stablecoins": [
+        "Tether_to", "circle", "MakerDAO",
+        "fraxfinance", "DeFi_Franc", "liqualityio",
+        "crvUSD_curve", "DEUSDX", "USDe_ethena",
+    ],
+
+    # ── zkEVM / new L2 ecosystems ─────────────────────────────────────────
+    "zkevm": [
+        "0xPolygonDev", "zksync", "Starknet",
+        "Scroll_ZKP", "LineaBuild", "taiko_xyz",
+        "ConsenSysMesh", "HorizenLabs", "KakarotZkEvm",
+        "PolygonMiden",
+    ],
+
+    # ── Solana DeFi (deeper) — lending, options, perps ────────────────────
+    "solana_defi": [
+        "KaminoFinance", "MarginFi_", "solend_official",
+        "ZetaMarkets", "NullStrike_", "PsyFinance",
+        "HxroNetwork", "FluxBeamDEX", "symmetry_fi",
+        "RatexSolana",
+    ],
+
+    # ── Ordinals / BTC L2 ────────────────────────────────────────────────
+    "btc_l2": [
+        "Ordinals", "OrdinalBTC", "inscribeNow_",
+        "stacks", "merlinchain_", "BounceBit_io",
+        "BedrockDiamond", "SolvProtocol", "babylon_chain",
+        "corn_chain",
+    ],
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,12 +442,61 @@ _DYNAMIC_ACCOUNTS: list[str] = []
 _DYNAMIC_LAST_REFRESH: float = 0.0
 _DYNAMIC_REFRESH_INTERVAL: float = 4 * 3600  # 4 hours
 
+# CoinGecko categories to pull top coins from (each returns up to 250 coins)
+_COINGECKO_CATEGORIES = [
+    "decentralized-exchange",
+    "meme-token",
+    "gaming",
+    "non-fungible-tokens-nft",
+    "layer-2",
+    "decentralized-finance-defi",
+    "play-to-earn",
+    "artificial-intelligence",
+    "real-world-assets-rwa",
+    "centralized-exchange-token-cex",
+    "perpetuals",
+    "liquid-staking-tokens",
+    "restaking",
+    "ton-ecosystem",
+    "solana-ecosystem",
+    "base-ecosystem",
+    "arbitrum-ecosystem",
+    "new-cryptocurrencies",
+]
+
+# Account rotation state — scan a rotating batch each cycle instead of all at once
+_ROTATION_INDEX: int = 0
+_ROTATION_BATCH: int = 130  # accounts scanned per 5-min cycle
+
+
+def _cg_get(url: str, timeout: int = 10) -> dict:
+    """Single CoinGecko GET with error propagation."""
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def _fetch_twitter_handle(slug: str) -> str:
+    """Return twitter_screen_name for a CoinGecko coin slug, or ''."""
+    try:
+        coin = _cg_get(
+            f"https://api.coingecko.com/api/v3/coins/{slug}"
+            "?localization=false&tickers=false&market_data=false"
+            "&community_data=false&developer_data=false"
+        )
+        return (coin.get("links") or {}).get("twitter_screen_name", "") or ""
+    except Exception:
+        return ""
+
 
 def _refresh_dynamic_accounts() -> None:
     """
-    Pull trending coins from CoinGecko and add their Twitter handles to the
-    dynamic pool. This automatically picks up new projects (meme coins, gaming
-    tokens, AI narratives) as they trend, without manual list updates.
+    Pull Twitter handles from CoinGecko across multiple sources:
+      1. Trending search (15 coins — real-time)
+      2. Top coins per ecosystem/category (6 categories × 8 coins each)
+    Refreshes every 4 hours — automatically discovers new / viral projects.
     """
     global _DYNAMIC_ACCOUNTS, _DYNAMIC_LAST_REFRESH
     now = time.time()
@@ -351,40 +505,64 @@ def _refresh_dynamic_accounts() -> None:
 
     handles: list[str] = []
     existing_lower = {a.lower() for accs in _ACCOUNTS.values() for a in accs}
+    existing_lower.update(h.lower() for h in _DYNAMIC_ACCOUNTS)
 
+    def _add(tw: str) -> None:
+        if tw and tw.lower() not in existing_lower and tw not in handles:
+            handles.append(tw)
+            existing_lower.add(tw.lower())
+
+    # ── Source 1: Trending ────────────────────────────────────────────────
     try:
-        req = urllib.request.Request(
-            "https://api.coingecko.com/api/v3/search/trending",
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=12) as r:
-            data = json.loads(r.read())
+        data = _cg_get("https://api.coingecko.com/api/v3/search/trending")
         slugs = [c["item"]["id"] for c in data.get("coins", [])[:15]]
-
         for slug in slugs:
-            try:
-                req2 = urllib.request.Request(
-                    f"https://api.coingecko.com/api/v3/coins/{slug}"
-                    "?localization=false&tickers=false&market_data=false"
-                    "&community_data=false&developer_data=false",
-                    headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-                )
-                with urllib.request.urlopen(req2, timeout=8) as r2:
-                    coin = json.loads(r2.read())
-                tw = (coin.get("links") or {}).get("twitter_screen_name", "")
-                if tw and tw.lower() not in existing_lower and tw not in handles:
-                    handles.append(tw)
-            except Exception:
-                pass
-            time.sleep(1.5)
-
+            _add(_fetch_twitter_handle(slug))
+            time.sleep(2.5)
     except Exception as e:
-        logging.warning(f"x_issues_monitor: CoinGecko dynamic discovery error: {e}")
+        logging.warning(f"x_issues_monitor: CoinGecko trending error: {e}")
+
+    # ── Source 2: Top coins from rotating categories ───────────────────────
+    # Pick 6 categories per refresh (rotate through all on each 4h cycle)
+    import random
+    cats = random.sample(_COINGECKO_CATEGORIES, min(6, len(_COINGECKO_CATEGORIES)))
+    for cat in cats:
+        try:
+            url = (
+                f"https://api.coingecko.com/api/v3/coins/markets"
+                f"?vs_currency=usd&category={cat}&order=volume_desc"
+                f"&per_page=20&page=1&sparkline=false"
+            )
+            coins = _cg_get(url)
+            slugs = [c["id"] for c in coins[:8]]
+            for slug in slugs:
+                _add(_fetch_twitter_handle(slug))
+                time.sleep(2.5)
+        except Exception as e:
+            logging.warning(f"x_issues_monitor: CoinGecko category '{cat}' error: {e}")
+        time.sleep(3)
+
+    # ── Source 3: Top 24h gainers (new viral tokens) ───────────────────────
+    try:
+        gainers = _cg_get(
+            "https://api.coingecko.com/api/v3/coins/markets"
+            "?vs_currency=usd&order=gecko_desc&per_page=10&page=1"
+            "&sparkline=false&price_change_percentage=24h"
+        )
+        for c in gainers[:6]:
+            _add(_fetch_twitter_handle(c["id"]))
+            time.sleep(2.5)
+    except Exception as e:
+        logging.warning(f"x_issues_monitor: CoinGecko gainers error: {e}")
 
     if handles:
         _DYNAMIC_ACCOUNTS = handles
-        _DYNAMIC_LAST_REFRESH = now
-        logging.info(f"x_issues_monitor: dynamic accounts refreshed — {len(handles)} new: {handles}")
+        logging.info(
+            f"x_issues_monitor: dynamic discovery — {len(handles)} new handles "
+            f"from CoinGecko: {handles[:10]}{'...' if len(handles)>10 else ''}"
+        )
+
+    _DYNAMIC_LAST_REFRESH = now
 
 # Flat deduped list
 _ALL_ACCOUNTS: list[str] = []
@@ -646,25 +824,49 @@ def fetch_issues(
     """
     seen_ids = seen_ids or set()
 
+    global _ROTATION_INDEX
+
     auth, ct0 = _load_creds()
     if not auth or not ct0:
         logging.warning("x_issues_monitor: no credentials")
         return []
 
-    # Refresh CoinGecko trending accounts (no-op if < 4 hours since last refresh)
+    # Refresh CoinGecko discovery (no-op if < 4 hours since last refresh)
     _refresh_dynamic_accounts()
 
     session  = _make_session(auth, ct0)
     cache    = _load_user_id_cache()
-    cutoff   = time.time() - 48 * 3600
+    # 3-hour cutoff: only fetch recent tweets — prevents replaying old tweets
+    # after Render restarts / deploys (the primary cause of duplicates).
+    cutoff   = time.time() - 3 * 3600
 
-    # ── Step 1: Fetch official/project account tweets ─────────────────────
-    # Combine static list + dynamic CoinGecko trending accounts
-    all_accounts_to_scan = _ALL_ACCOUNTS + [
-        h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set
-    ]
+    # ── Step 1: Build account pool + rotate batch ─────────────────────────
+    # Combine static + dynamic and rotate through a different 130-account
+    # window each cycle — covers full pool every ~15 min at 5-min intervals,
+    # surfaces different projects each run rather than always the same names.
+    import random as _rand
+    dynamic_new = [h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set]
+    full_pool   = _ALL_ACCOUNTS + dynamic_new
 
-    official_tweets: list[dict] = []  # (tweet dict with extra "source_cat" key)
+    # Deterministic rotation: advance index each call
+    pool_size  = len(full_pool)
+    batch_size = min(_ROTATION_BATCH, pool_size)
+    start      = (_ROTATION_INDEX * batch_size) % max(pool_size, 1)
+    batch      = full_pool[start : start + batch_size]
+    if len(batch) < batch_size:
+        batch += full_pool[: batch_size - len(batch)]
+    _ROTATION_INDEX += 1
+    # Shuffle within batch so different accounts get first shot at the reply cap
+    _rand.shuffle(batch)
+    all_accounts_to_scan = batch
+
+    logging.info(
+        f"x_issues_monitor: scanning {len(all_accounts_to_scan)} accounts "
+        f"(pool={pool_size}, dynamic={len(dynamic_new)}, "
+        f"rotation_idx={_ROTATION_INDEX})"
+    )
+
+    official_tweets: list[dict] = []
     global_seen: set[str] = set(seen_ids)
 
     for screen_name in all_accounts_to_scan:
