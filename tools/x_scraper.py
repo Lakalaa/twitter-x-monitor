@@ -21,6 +21,7 @@ BEARER = (
 
 _QID_USER_BY_SCREEN   = "2qvSHpkWTMS9i0zJAwDNiA"
 _QID_USER_TWEETS      = "RIylB10EGWyBSs4ZXpQjCw"
+_QID_TWEET_DETAIL     = "VWFGPVAGkZMGRKGe3GFFnA"   # confirmed working Jul-2026
 
 _USER_FEATURES = {
     "hidden_profile_subscriptions_enabled": True,
@@ -199,10 +200,76 @@ def _parse_twitter_date(date_str: str):
         return 0.0
 
 
+_DETAIL_FEATURES = {
+    "rweb_video_screen_enabled": False,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "articles_preview_enabled": True,
+    "view_counts_everywhere_api_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "longform_notetweets_inline_media_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+}
+
+
+def fetch_tweet_replies(tweet_id: str, session, max_age_hours: int = 48) -> list[dict]:
+    """
+    Fetch reply tweets on a given tweet via TweetDetail GraphQL.
+    Returns reply tweets from ANY user — this is how we capture real user complaints.
+    Only returns replies newer than max_age_hours.
+    """
+    import time as _time
+    import logging
+    cutoff = _time.time() - max_age_hours * 3600
+    url = f"https://x.com/i/api/graphql/{_QID_TWEET_DETAIL}/TweetDetail"
+    try:
+        r = session.get(url, params={
+            "variables": json.dumps({
+                "focalTweetId": tweet_id,
+                "referrer": "tweet",
+                "count": 40,
+                "with_rux_injections": False,
+                "rankingMode": "Recency",
+                "includePromotedContent": False,
+                "withCommunity": True,
+                "withQuickPromoteEligibilityTweetFields": False,
+                "withBirdwatchNotes": False,
+                "withVoice": True,
+            }, separators=(",", ":")),
+            "features": json.dumps(_DETAIL_FEATURES, separators=(",", ":")),
+            "fieldToggles": '{"withArticleRichContentState":false}',
+        }, timeout=15)
+        if r.status_code == 429:
+            logging.warning(f"x_scraper: rate-limited (429) fetching replies for {tweet_id}")
+            return []
+        if r.status_code != 200:
+            return []
+        raw = r.json()
+        all_tweets = _find_tweets(raw)
+        replies = []
+        for t in all_tweets:
+            if t.get("id") == tweet_id:
+                continue  # skip the focal tweet itself
+            ts = _parse_twitter_date(t.get("date", ""))
+            if ts and ts < cutoff:
+                continue
+            t["url"] = f"https://x.com/{t['user']}/status/{t['id']}" if t.get("id") else ""
+            t["is_reply"] = True
+            replies.append(t)
+        return replies
+    except Exception as e:
+        import logging
+        logging.warning(f"x_scraper: fetch_tweet_replies({tweet_id}) error: {e}")
+        return []
+
+
 def fetch_tweets_from_accounts(
     screen_names: list[str],
     tweets_per_account: int = 10,
-    max_age_hours: int = 72,
+    max_age_hours: int = 48,
 ) -> list[dict]:
     """
     Fetch recent tweets from a list of @screen_names.
