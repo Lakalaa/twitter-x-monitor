@@ -2,23 +2,24 @@
 x_issues_monitor.py
 
 PRIORITY ORDER (what gets sent to Telegram first):
-  1. User complaint replies — random users replying to official posts with issues
+  1. User complaint replies — random users replying to project/community posts
      (staking stuck, tx failed, can't withdraw, asking for help, etc.)
   2. Official account urgent posts — exploits, outages, hacks from monitored accounts
   3. Official account trending posts — price news, new listings, governance
 
-"User complaint replies" are fetched via TweetDetail on the most-engaged official
-tweets. These replies come from ANY user on X — the regular community members
-tagging support and complaining about issues. This is the primary signal.
+The key insight: we monitor ECOSYSTEM PROJECTS built on chains — pump.fun,
+Raydium, Magic Eden, meme coins, NFT communities, gaming projects, TON apps, etc.
+Users complain under THOSE community posts, not under @solana or @ethereum.
 
-Networks: ETH, BTC, Solana, BNB, Base, Polygon, Arbitrum, Optimism, Ronin/Axie,
-          LTC, XRP/XRPL, Cosmos, Avalanche, zkSync, Starknet, TON, NEAR, Sui,
-          Aptos, Algorand, Stellar, Cardano, Tron, Fantom
+New projects launch constantly. Dynamic discovery via CoinGecko trending refreshes
+the account pool every 4 hours automatically.
 """
 from __future__ import annotations
+import json
 import re
 import time
 import logging
+import urllib.request
 from typing import Optional
 
 from x_scraper import (
@@ -36,147 +37,295 @@ from x_scraper import (
 # Accounts to monitor — only used as reply-scrape SOURCES
 # We read their tweets so we can then fetch the replies underneath them.
 # The replies (from any random user) are what we actually care about most.
+#
+# FOCUS: ecosystem projects (DEXes, launchpads, NFT markets, gaming, meme coins)
+# that have active user communities complaining about issues.
 # ─────────────────────────────────────────────────────────────────────────────
 
 _ACCOUNTS: dict[str, list[str]] = {
 
-    # ── Exchange support — users tag these with every complaint ───────────────
+    # ── Exchange support — users tag these with every complaint ──────────────
     "exchanges": [
         "BinanceHelpDesk", "binance", "CoinbaseSupport", "coinbase",
         "Bybit_CS", "Bybit_Official", "KrakenSupport", "krakenfx",
         "OKXSupport", "OKX", "GateioHelp", "gate_io",
         "HTXGlobal_Help", "HTX_Global", "BitstampSupport",
         "CoinExSupport", "KucoinSupport", "mexc_global",
-        "cryptocom_cares", "crypto_com",
+        "cryptocom_cares", "crypto_com", "gemini", "bitfinex",
+        "upbit_official", "BithumbCS",
     ],
 
-    # ── Wallet / infra support ─────────────────────────────────────────────
+    # ── Wallet / infra support ────────────────────────────────────────────
     "wallets": [
         "MetaMask_Support", "MetaMask", "TrustWalletApp", "TrustWallet",
         "LedgerSupport", "Ledger", "phantom", "RainbowWallet",
         "safe", "WalletConnect", "Trezor", "CoinbaseWallet",
         "AlchemyPlatform", "infura_io", "QuickNode", "Rabby_io",
+        "exodus", "AtomicWallet", "okx_wallet",
     ],
 
-    # ── Liquid staking / yield — users complain here about locked stake ────
+    # ── Liquid staking / yield — users complain here about locked stake ───
     "staking": [
         "LidoFinance", "RocketPool", "staderlabs", "ankr",
         "EigenLayer", "ether_fi", "KelpDAO", "StakeWise",
         "pStake_", "frxETH_", "MarinadeFinance", "enzyme_finance",
+        "jito_sol", "sanctumso", "solayerlabs",
     ],
 
-    # ── Bridges — common source of stuck funds complaints ─────────────────
+    # ── Bridges — stuck funds are the #1 complaint ───────────────────────
     "bridges": [
         "StargateFinance", "LayerZero_Core", "HopProtocol",
         "AcrossProtocol", "Connext", "deBridgeFinance",
         "MultichainOrg", "SocketDotTech", "orbiter_finance",
+        "wormhole", "portalbridge", "cbridge_celer",
+        "synapse_proto", "RenProject",
     ],
 
-    # ── Ronin / Axie / Sky Mavis ───────────────────────────────────────────
-    "ronin": [
-        "Ronin_Network", "AxieInfinity", "SkyMavisHQ",
-        "ronin_wallet", "roninchain", "katana_dex", "Pixels_",
+    # ── Solana DEX / DeFi — biggest user bases on Solana ─────────────────
+    "solana_dex": [
+        "RaydiumProtocol", "OrcaProtocol", "JupiterExchange",
+        "MeteoraAG", "drift_trade", "KaminoFinance",
+        "MangoMarkets", "solendprotocol", "MarinadeFinance",
+        "SaberProtocol", "squadsprotocol", "heliuslabs",
+        "lifinity_io", "GooseFX_", "ZetaMarkets",
     ],
 
-    # ── Solana ecosystem ──────────────────────────────────────────────────
-    "solana": [
-        "solana", "SolanaStatus", "phantom",
-        "JupiterExchange", "solendprotocol", "MangoMarkets",
-        "RaydiumProtocol", "OrcaProtocol", "drift_trade",
+    # ── pump.fun & Solana launchpads — new tokens launch here daily ───────
+    "solana_launch": [
+        "pumpdotfun", "moonshot_money", "letscookfi",
+        "boop_fun", "believe_app", "launchcoin_",
+        "bonkbot_io", "BullX_io", "trojanOnSolana",
     ],
 
-    # ── LTC ────────────────────────────────────────────────────────────────
-    "litecoin": [
-        "LTCFoundation", "litecoin", "LitecoinCore", "SatoshiLite",
+    # ── Solana NFT marketplaces — users complain about listings, royalties ─
+    "solana_nft": [
+        "MagicEden", "tensor_hq", "SolanaFloor",
+        "MonkeDAO", "SolanaMonkeyBiz", "okay_bears",
+        "DeGodsNFT", "y00tsNFT", "CoralCubeNFT",
+        "hyperspace_xyz",
     ],
 
-    # ── XRP / XRPL ────────────────────────────────────────────────────────
-    "xrp": [
-        "xrpledger", "Ripple", "XRPcommunity", "XRPHealthCheck",
-        "xrpl_org", "XUMM_app", "sologenic",
+    # ── Solana meme & community tokens — huge user communities ───────────
+    "solana_meme": [
+        "bonk_inu", "dogwifcoin", "book_of_meme",
+        "moodengcoin", "goattoken_", "ACTonsolana",
+        "fartcoin_sol", "POPCAT_",
     ],
 
-    # ── Base ──────────────────────────────────────────────────────────────
+    # ── Solana gaming & lifestyle ─────────────────────────────────────────
+    "solana_gaming": [
+        "StarAtlas", "StepNofficial", "helium",
+        "Hivemapper", "aurory_game", "StarbirdGG",
+        "GeneticChain",
+    ],
+
+    # ── ETH DeFi — high-value, frequent stuck-tx complaints ───────────────
+    "ethereum": [
+        "ethereum", "ethstatus", "AaveAave", "Uniswap",
+        "MakerDAO", "CurveFinance", "compoundfinance",
+        "BalancerLabs", "1inchNetwork", "dYdX",
+        "fraxfinance", "ConvexFinance", "iearnfinance",
+        "paraswap", "BancorNetwork", "KyberNetwork",
+        "pendle_fi", "sparkdotfi",
+    ],
+
+    # ── ETH NFT communities — users complain about failed mints, transfers ─
+    "eth_nft": [
+        "BoredApeYC", "AzukiOfficial", "pudgypenguins",
+        "doodles", "proof_xyz", "coolcatsnft",
+        "CryptoPunksBot", "CloneXOfficial", "rtfkt",
+        "NFTfi", "blur_io",
+    ],
+
+    # ── BNB Chain / BSC ecosystem ─────────────────────────────────────────
+    "bnb": [
+        "BNBCHAIN", "binance", "PancakeSwap", "VenusProtocol",
+        "BiswapDEX", "ApeSwapFinance", "alpacafinance",
+        "ellipsis_fi", "FourMeme_BNB",
+    ],
+
+    # ── Base ecosystem — fast-growing, many new projects ─────────────────
     "base": [
         "base", "BuildOnBase", "jessepollak", "AerodromeFinance",
-        "MorphoLabs", "BaseSwap_fi",
+        "MorphoLabs", "BaseSwap_fi", "moonwell_fi",
+        "seamlessprotocol_", "BasePaint_xyz", "friendtech",
+        "SyndicateDAO", "virtuals_io",
     ],
 
-    # ── Arbitrum ──────────────────────────────────────────────────────────
+    # ── Arbitrum ecosystem ────────────────────────────────────────────────
     "arbitrum": [
-        "arbitrum", "GMX_IO", "camelotdex",
+        "arbitrum", "GMX_IO", "camelotdex", "pendle_fi",
+        "y2kfinance", "PlutusDAO_", "dopex_io",
+        "RyskFinance", "SpartacusDAO",
     ],
 
-    # ── Optimism ──────────────────────────────────────────────────────────
+    # ── Optimism ecosystem ────────────────────────────────────────────────
     "optimism": [
         "optimismFND", "Optimism", "VelodromeFi", "synthetix_io",
+        "QiDaoProtocol", "pika_protocol", "lyrafinance",
     ],
 
-    # ── Polygon ───────────────────────────────────────────────────────────
+    # ── Polygon ecosystem ─────────────────────────────────────────────────
     "polygon": [
-        "0xPolygon", "QuickswapDEX",
+        "0xPolygon", "QuickswapDEX", "aavegotchi",
+        "SushiSwap", "dfyn_network",
     ],
 
-    # ── Other L2 / ZK ─────────────────────────────────────────────────────
+    # ── Other L2 / ZK — many new users, unfamiliar tech = more complaints ─
     "layer2": [
         "zksync", "Starknet", "Scroll_ZKP", "LineaBuild",
         "MetisDAO", "BlastL2", "modenetwork",
-    ],
-
-    # ── BNB / BSC ─────────────────────────────────────────────────────────
-    "bnb": [
-        "BNBCHAIN", "binance", "PancakeSwap", "VenusProtocol",
+        "taiko_xyz", "manta_network", "ancient8io",
+        "eclipsefnd", "MantleBlockchain",
     ],
 
     # ── Avalanche / Subnets ───────────────────────────────────────────────
     "avalanche": [
         "avalancheavax", "AvaLabs", "BenqiFinance",
         "traderjoe_xyz", "CoreDaoOrg", "dexalot",
+        "GoGoPool_",
     ],
 
-    # ── Ethereum / DeFi ───────────────────────────────────────────────────
-    "ethereum": [
-        "ethereum", "ethstatus", "AaveAave", "Uniswap",
-        "MakerDAO", "CurveFinance", "compoundfinance",
+    # ── TON ecosystem — exploding user base from Telegram mini-apps ───────
+    "ton": [
+        "ton_blockchain", "tonkeeper", "notcoin_dog",
+        "HamsterKombat_io", "STONfi", "dedust_io",
+        "getgems_io", "TonRaffles", "cryptobotFAQ",
+        "Blum_crypto", "major", "dogs", "catizen_tg",
     ],
 
-    # ── Cosmos ────────────────────────────────────────────────────────────
+    # ── Ronin / Axie / Sky Mavis ──────────────────────────────────────────
+    "ronin": [
+        "Ronin_Network", "AxieInfinity", "SkyMavisHQ",
+        "ronin_wallet", "roninchain", "katana_dex", "Pixels_",
+        "Apeiron_Game", "ZeroRanger_",
+    ],
+
+    # ── Cosmos ecosystem ──────────────────────────────────────────────────
     "cosmos": [
         "cosmos", "OsmosisZone", "keplr_wallet", "stride_zone",
-        "neutron_org",
+        "neutron_org", "dydx", "celestia", "dymension_xyz",
     ],
 
-    # ── TON ───────────────────────────────────────────────────────────────
-    "ton": [
-        "ton_blockchain", "tonkeeper",
+    # ── XRP / XRPL ───────────────────────────────────────────────────────
+    "xrp": [
+        "xrpledger", "Ripple", "XRPcommunity", "XRPHealthCheck",
+        "xrpl_org", "XUMM_app", "sologenic", "xaman_app",
     ],
 
-    # ── Other alt-L1 ──────────────────────────────────────────────────────
+    # ── LTC ──────────────────────────────────────────────────────────────
+    "litecoin": [
+        "LTCFoundation", "litecoin", "LitecoinCore", "SatoshiLite",
+    ],
+
+    # ── Major meme coins — huge communities, users frequently complain ────
+    "meme": [
+        "dogecoin", "Shibtoken", "pepecoineth", "FlokiInu",
+        "dogelon", "ShibaInuHodler", "baby_doge",
+        "BONK_Coin", "notcoin_dog", "pepe",
+    ],
+
+    # ── Multi-chain gaming — users complain about in-game assets/tokens ──
+    "gaming": [
+        "decentraland", "TheSandboxGame", "Gala_Games",
+        "immutable", "Illuvium", "PlantvsUndead_",
+        "YGG_DAO", "GuildFi", "MOBOX_Official",
+        "monsterGalaxy_", "CrabadaGame",
+    ],
+
+    # ── AI / new narrative projects — growing user bases ─────────────────
+    "ai_crypto": [
+        "bittensor_", "grass_io", "io_net",
+        "RenderToken", "akash_network", "FetchAI_",
+        "virtuals_io", "ai16zdao", "elizaOS_",
+    ],
+
+    # ── Alt-L1 chains ─────────────────────────────────────────────────────
     "altl1": [
         "Polkadot", "SuiNetwork", "aptos_network",
         "nearprotocol", "StellarOrg", "TronFoundation",
-        "Cardano", "Algorand",
+        "Cardano", "Algorand", "sei_network",
+        "MovementLabsXYZ", "monad_xyz",
     ],
 
-    # ── Security / exploit alert ───────────────────────────────────────────
+    # ── Security / exploit alert ──────────────────────────────────────────
     "security": [
         "PeckShieldAlert", "BeosinAlert", "BlockSecTeam",
         "CertiKCommunity", "SlowMist_Team", "immunefi",
         "AnciliaInc", "tayvano_", "samczsun", "Mudit__Gupta",
     ],
 
-    # ── News / market — for trending posts ────────────────────────────────
+    # ── News / market ─────────────────────────────────────────────────────
     "market": [
         "WatcherGuru", "lookonchain", "whale_alert",
         "CoinDesk", "Cointelegraph", "rektHQ", "DeFiant_",
         "DefiLlama",
     ],
 
-    # ── Bitcoin ────────────────────────────────────────────────────────────
+    # ── Bitcoin ───────────────────────────────────────────────────────────
     "bitcoin": [
         "saylor", "BitcoinMagazine", "Bitcoin", "jack", "lopp",
     ],
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dynamic account discovery via CoinGecko
+# Fetches trending/top-volume projects and extracts their Twitter handles.
+# Refreshes every 4 hours — captures NEW projects automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DYNAMIC_ACCOUNTS: list[str] = []
+_DYNAMIC_LAST_REFRESH: float = 0.0
+_DYNAMIC_REFRESH_INTERVAL: float = 4 * 3600  # 4 hours
+
+
+def _refresh_dynamic_accounts() -> None:
+    """
+    Pull trending coins from CoinGecko and add their Twitter handles to the
+    dynamic pool. This automatically picks up new projects (meme coins, gaming
+    tokens, AI narratives) as they trend, without manual list updates.
+    """
+    global _DYNAMIC_ACCOUNTS, _DYNAMIC_LAST_REFRESH
+    now = time.time()
+    if now - _DYNAMIC_LAST_REFRESH < _DYNAMIC_REFRESH_INTERVAL:
+        return
+
+    handles: list[str] = []
+    existing_lower = {a.lower() for accs in _ACCOUNTS.values() for a in accs}
+
+    try:
+        req = urllib.request.Request(
+            "https://api.coingecko.com/api/v3/search/trending",
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=12) as r:
+            data = json.loads(r.read())
+        slugs = [c["item"]["id"] for c in data.get("coins", [])[:15]]
+
+        for slug in slugs:
+            try:
+                req2 = urllib.request.Request(
+                    f"https://api.coingecko.com/api/v3/coins/{slug}"
+                    "?localization=false&tickers=false&market_data=false"
+                    "&community_data=false&developer_data=false",
+                    headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+                )
+                with urllib.request.urlopen(req2, timeout=8) as r2:
+                    coin = json.loads(r2.read())
+                tw = (coin.get("links") or {}).get("twitter_screen_name", "")
+                if tw and tw.lower() not in existing_lower and tw not in handles:
+                    handles.append(tw)
+            except Exception:
+                pass
+            time.sleep(1.5)
+
+    except Exception as e:
+        logging.warning(f"x_issues_monitor: CoinGecko dynamic discovery error: {e}")
+
+    if handles:
+        _DYNAMIC_ACCOUNTS = handles
+        _DYNAMIC_LAST_REFRESH = now
+        logging.info(f"x_issues_monitor: dynamic accounts refreshed — {len(handles)} new: {handles}")
 
 # Flat deduped list
 _ALL_ACCOUNTS: list[str] = []
@@ -321,29 +470,38 @@ _SPAM_RE = re.compile(
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CAT_HEADER = {
-    "exchanges": "🏛️ EXCHANGE",
-    "wallets":   "👛 WALLET",
-    "staking":   "🔒 STAKING / YIELD",
-    "bridges":   "🌉 BRIDGE",
-    "ronin":     "🎮 RONIN / AXIE",
-    "solana":    "◎  SOLANA",
-    "litecoin":  "Ł  LITECOIN",
-    "xrp":       "✕  XRP / XRPL",
-    "base":      "🔵 BASE",
-    "arbitrum":  "🔵 ARBITRUM",
-    "optimism":  "🔴 OPTIMISM",
-    "polygon":   "🟣 POLYGON",
-    "layer2":    "⚡ LAYER-2",
-    "bnb":       "🟡 BNB CHAIN",
-    "avalanche": "🔺 AVALANCHE",
-    "ethereum":  "⟠  ETHEREUM / DEFI",
-    "cosmos":    "⚛️  COSMOS",
-    "ton":       "💎 TON",
-    "altl1":     "🔵 ALT-CHAIN",
-    "security":  "🚨 SECURITY",
-    "market":    "📊 MARKET",
-    "bitcoin":   "₿  BITCOIN",
-    "misc":      "🔥 CRYPTO",
+    "exchanges":     "🏛️ EXCHANGE",
+    "wallets":       "👛 WALLET",
+    "staking":       "🔒 STAKING / YIELD",
+    "bridges":       "🌉 BRIDGE",
+    "solana_dex":    "◎  SOLANA DEX",
+    "solana_launch": "🚀 SOLANA LAUNCH (pump.fun etc)",
+    "solana_nft":    "🖼️  SOLANA NFT",
+    "solana_meme":   "🐶 SOLANA MEME",
+    "solana_gaming": "🎮 SOLANA GAMING",
+    "ronin":         "🎮 RONIN / AXIE",
+    "solana":        "◎  SOLANA",
+    "litecoin":      "Ł  LITECOIN",
+    "xrp":           "✕  XRP / XRPL",
+    "base":          "🔵 BASE",
+    "arbitrum":      "🔵 ARBITRUM",
+    "optimism":      "🔴 OPTIMISM",
+    "polygon":       "🟣 POLYGON",
+    "layer2":        "⚡ LAYER-2",
+    "bnb":           "🟡 BNB CHAIN",
+    "avalanche":     "🔺 AVALANCHE",
+    "ethereum":      "⟠  ETHEREUM / DEFI",
+    "eth_nft":       "🖼️  ETH NFT",
+    "cosmos":        "⚛️  COSMOS",
+    "ton":           "💎 TON ECOSYSTEM",
+    "meme":          "🐸 MEME COIN",
+    "gaming":        "🎮 GAMING",
+    "ai_crypto":     "🤖 AI / COMPUTE",
+    "altl1":         "🔵 ALT-CHAIN",
+    "security":      "🚨 SECURITY",
+    "market":        "📊 MARKET",
+    "bitcoin":       "₿  BITCOIN",
+    "misc":          "🔥 CRYPTO",
 }
 
 
@@ -403,15 +561,23 @@ def fetch_issues(
         logging.warning("x_issues_monitor: no credentials")
         return []
 
+    # Refresh CoinGecko trending accounts (no-op if < 4 hours since last refresh)
+    _refresh_dynamic_accounts()
+
     session  = _make_session(auth, ct0)
     cache    = _load_user_id_cache()
     cutoff   = time.time() - 48 * 3600
 
-    # ── Step 1: Fetch official account tweets ─────────────────────────────
+    # ── Step 1: Fetch official/project account tweets ─────────────────────
+    # Combine static list + dynamic CoinGecko trending accounts
+    all_accounts_to_scan = _ALL_ACCOUNTS + [
+        h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set
+    ]
+
     official_tweets: list[dict] = []  # (tweet dict with extra "source_cat" key)
     global_seen: set[str] = set(seen_ids)
 
-    for screen_name in _ALL_ACCOUNTS:
+    for screen_name in all_accounts_to_scan:
         uid = get_user_id(screen_name, session, cache)
         if not uid:
             continue
