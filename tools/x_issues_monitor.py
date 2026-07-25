@@ -16,6 +16,7 @@ the account pool every 4 hours automatically.
 """
 from __future__ import annotations
 import json
+import os
 import re
 import time
 import logging
@@ -654,6 +655,137 @@ _ACCOUNTS: dict[str, list[str]] = {
         "BedrockDiamond", "SolvProtocol", "babylon_chain",
         "corn_chain",
     ],
+
+    # ── Derivatives / margin CEXes ────────────────────────────────────────
+    "cex_derivatives": [
+        "DeribitExchange", "BitMEX", "WOO_X_Official",
+        "bitget_official", "MEXC_Official", "BingXOfficial",
+        "CoinexExchange", "BitFuturesXYZ", "nominex_",
+        "BybitDerivatives", "BinanceFutures",
+        "CoinbasePrimeHQ", "KrakenFutures",
+    ],
+
+    # ── More gaming (expanded) ────────────────────────────────────────────
+    "gaming3": [
+        "ShrapnelGame", "WildcardNFT", "OffTheGridGame",
+        "MojoMelee_", "DeadropNFT", "HeroesChained",
+        "MetalCore_Game", "CryptoCavemen", "SynCityGame",
+        "OthersideHQ", "niftyisland", "readyplayerme",
+        "GalaxisGG", "ElmonteNFT", "OverworldNFT",
+        "WindRangersGame", "FaralandGame",
+    ],
+
+    # ── More AI / DePIN ──────────────────────────────────────────────────
+    "ai_depin": [
+        "OceanProtocol", "RitualNet", "GensynAI",
+        "Gensyn_io", "NumeraiTrader", "FetchAI_",
+        "worldcoin", "TaoNetwork_", "NousResearch",
+        "hyperbolic_labs", "inferencelabs_",
+        "NovitaAI", "prime_intellect", "gizatechxyz",
+        "allora_network",
+    ],
+
+    # ── More TON mini-apps / games ────────────────────────────────────────
+    "ton3": [
+        "pixeltap_io", "MatchQuest_io", "bumsapp_",
+        "HamsterKombat_io", "Goats_game", "JettonDogs",
+        "MajorTON", "xempire_io", "tonkombat_io",
+        "Cats_HQ", "TapSwap_io", "PAWS_TON",
+        "FleekTON", "OKX_TON",
+    ],
+
+    # ── More meme / viral tokens ──────────────────────────────────────────
+    "meme3": [
+        "apecoinsol", "gigacoinsol", "goatseus",
+        "ai16zdao", "skibidi_sol", "babydogecoin",
+        "Myro_sol", "PointlessToken", "TrumpMemeToken",
+        "peanuttheswc", "chillguyonsol", "lockin_sol",
+        "motherofmemes", "gigachadToken", "agent_sol",
+    ],
+
+    # ── Newer Solana protocols ────────────────────────────────────────────
+    "solana3": [
+        "sanctumso", "solayerlabs", "squadsprotocol",
+        "NeonEVM", "eclipsefnd", "solaxy_io",
+        "SarosFinance", "cykuraprotocol", "CrateProtocol",
+        "HandleFi", "SolBlaze", "stabble_io",
+        "loopscale_xyz",
+    ],
+
+    # ── Newer Base / OP / ARB protocols ──────────────────────────────────
+    "base_op_arb3": [
+        "extra_finance_", "Superform_xyz", "AIPX_xyz",
+        "OvernightDeFi", "dysonfinance_", "toros_finance",
+        "PonderFinance", "RocketX_exchange", "PancakeSwap",
+        "SharkswapXYZ", "Swapr_eth", "MaverickProtocol",
+        "SyncSwapDEX", "SpaceFiProtocol",
+    ],
+
+    # ── More NFT / metaverse ──────────────────────────────────────────────
+    "nft3": [
+        "OthersideHQ", "yugalabs", "AkutarNFT",
+        "Nakamigos", "KanpaiPandas", "CryptoadzNFT",
+        "Anonymice_NFT", "SappySeals", "DegenToadz",
+        "ParallelNFT", "GalacticGeckoNFT",
+        "FamousPixelFox", "Shinsei_Galverse",
+        "HuxleyComics", "Creepz_IO",
+    ],
+
+    # ── Hyperliquid ecosystem ─────────────────────────────────────────────
+    "hyperliquid": [
+        "HyperliquidX", "HypurrFi", "hypurr_fun",
+        "feFormance", "HyperEVM_", "pvp_trade",
+        "inceptionLRT", "kiloex_official",
+    ],
+
+    # ── More on/off ramps ─────────────────────────────────────────────────
+    "onramps2": [
+        "AlchemyPay", "guardarian_", "itez_com",
+        "BtcDirect", "Paybis", "mercuryo_io",
+        "Xanpool", "banxa", "FluidFi_xyz",
+        "Calypso_Protocol", "payfare",
+    ],
+
+    # ── NFT lending / perps ───────────────────────────────────────────────
+    "nft_finance": [
+        "NFTfi", "benddaodoteth", "X2Y2Financial",
+        "JPEG_d", "nftperp", "floordao_xyz",
+        "GoblinSax_", "zhartaTechFi", "unlockd_finance",
+        "paraspace_xyz", "Cyan_Finance",
+    ],
+
+    # ── More DeFi protocols ───────────────────────────────────────────────
+    "defi2": [
+        "TempleDAO_", "OlympusDAO", "AlchemixFi",
+        "reflexerfinance", "liquity_eth", "inverse_finance",
+        "ribbonfinance", "STRIPSFinance", "volmexfinance",
+        "unshethXYZ", "DineroXYZ", "pirexeth",
+        "YieldNestFi", "Napier_Finance",
+    ],
+
+    # ── Liquid restaking (all) ────────────────────────────────────────────
+    "restaking2": [
+        "puffer_finance", "RenzoProtocol", "swell_l2",
+        "YieldNestFi", "InceptionLRT", "bedrock_defi",
+        "StaderLabs", "ClayStack_", "bifrost_finance",
+        "ether_fi", "KelpDAO", "stakestone_io",
+        "symbiotic_fi", "mellow_defi",
+    ],
+
+    # ── Prediction markets ────────────────────────────────────────────────
+    "prediction": [
+        "polymarket", "Augur", "GnosisDAO",
+        "azuro_protocol", "overtime_markets",
+        "sx_network", "BetSwirl", "Ostium_Labs",
+    ],
+
+    # ── Decentralized storage / data ──────────────────────────────────────
+    "infra_data": [
+        "Filecoin", "arweave", "StorjProject",
+        "ThreeFoldio", "sia_hq", "hoprnet",
+        "DeFiChain", "NuCypher", "tezos",
+        "Kadena_io", "DeSo_Protocol",
+    ],
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -787,6 +919,98 @@ def _refresh_dynamic_accounts() -> None:
         )
 
     _DYNAMIC_LAST_REFRESH = now
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Background CoinGecko enrichment — top 500 coins by market cap
+# Runs once in a background thread on startup, refreshes every 24 hours.
+# Slowly fetches each coin's Twitter handle (1 call / 3 sec) and saves to disk.
+# This gives us 300-500 additional project accounts automatically, covering
+# thousands of coins we'd never manually list.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_BG_CACHE_PATH = os.path.join("outputs", "cache", "cg_top500_handles.json")
+_BG_ENRICHED: list[str] = []
+_BG_LAST_RUN: float = 0.0
+_BG_INTERVAL: float = 24 * 3600
+
+def _load_bg_cache() -> list[str]:
+    """Load previously discovered handles from disk."""
+    try:
+        if os.path.exists(_BG_CACHE_PATH):
+            with open(_BG_CACHE_PATH) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+def _save_bg_cache(handles: list[str]) -> None:
+    os.makedirs(os.path.dirname(_BG_CACHE_PATH), exist_ok=True)
+    with open(_BG_CACHE_PATH, "w") as f:
+        json.dump(handles, f)
+
+def _run_bg_enrichment() -> None:
+    """
+    Background thread: fetch top 500 coins by market cap from CoinGecko,
+    resolve each to its Twitter handle, persist to disk.
+    Runs once every 24 hours. Sleeps 3s between each detail call to respect
+    CoinGecko free-tier rate limits (~20 req/min).
+    """
+    global _BG_ENRICHED, _BG_LAST_RUN
+    import threading as _threading
+
+    def _worker():
+        global _BG_ENRICHED, _BG_LAST_RUN
+        time.sleep(30)  # wait for _ALL_ACCOUNTS to be fully populated at module level
+        while True:
+            now = time.time()
+            if now - _BG_LAST_RUN < _BG_INTERVAL:
+                time.sleep(300)  # check every 5 min
+                continue
+
+            logging.info("x_issues_monitor: starting background CoinGecko top-500 enrichment")
+            existing_lower = {a.lower() for a in _ALL_ACCOUNTS}
+            existing_lower.update(h.lower() for h in _BG_ENRICHED)
+            collected: list[str] = list(_BG_ENRICHED)  # keep existing
+
+            # Fetch top 500 by market cap across 2 pages
+            slugs: list[str] = []
+            for page in (1, 2):
+                try:
+                    url = (
+                        f"https://api.coingecko.com/api/v3/coins/markets"
+                        f"?vs_currency=usd&order=market_cap_desc"
+                        f"&per_page=250&page={page}&sparkline=false"
+                    )
+                    data = _cg_get(url, timeout=15)
+                    slugs.extend(c["id"] for c in data)
+                    time.sleep(5)
+                except Exception as e:
+                    logging.warning(f"x_issues_monitor: bg enrichment page {page} error: {e}")
+
+            logging.info(f"x_issues_monitor: bg enrichment fetching handles for {len(slugs)} coins")
+
+            for slug in slugs:
+                tw = _fetch_twitter_handle(slug)
+                if tw and tw.lower() not in existing_lower:
+                    collected.append(tw)
+                    existing_lower.add(tw.lower())
+                time.sleep(3)  # respect free-tier rate limit
+
+            _BG_ENRICHED = collected
+            _save_bg_cache(collected)
+            _BG_LAST_RUN = time.time()
+            logging.info(
+                f"x_issues_monitor: bg enrichment done — "
+                f"{len(collected)} total handles cached to disk"
+            )
+
+    t = _threading.Thread(target=_worker, daemon=True, name="cg-bg-enrichment")
+    t.start()
+
+# Load any previously cached handles immediately on import
+_BG_ENRICHED = _load_bg_cache()
+_run_bg_enrichment()
 
 # Flat deduped list
 _ALL_ACCOUNTS: list[str] = []
@@ -1070,7 +1294,8 @@ def fetch_issues(
     # surfaces different projects each run rather than always the same names.
     import random as _rand
     dynamic_new = [h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set]
-    full_pool   = _ALL_ACCOUNTS + dynamic_new
+    bg_new      = [h for h in _BG_ENRICHED     if h.lower() not in _seen_set]
+    full_pool   = _ALL_ACCOUNTS + dynamic_new + bg_new
 
     # Deterministic rotation: advance index each call
     pool_size  = len(full_pool)
