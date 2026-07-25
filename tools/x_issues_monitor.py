@@ -825,7 +825,7 @@ _ROTATION_INDEX: int = 0
 
 # Last scan diagnostics — readable from app.py after each fetch_issues() call
 _LAST_SCAN_STATS: dict = {}
-_ROTATION_BATCH: int = 150  # accounts scanned per 5-min cycle (full pool covered every ~28 min)
+_ROTATION_BATCH: int = 50   # accounts per 5-min cycle — 50×UserTweets = 150/15min, well under ~500/15min limit
 
 
 def _cg_get(url: str, timeout: int = 10) -> dict:
@@ -1306,9 +1306,9 @@ def fetch_issues(
 
     session  = _make_session(auth, ct0)
     cache    = _load_user_id_cache()
-    # 6-hour cutoff: fetch tweets from past 6 hours so each cycle has enough
-    # official posts to check reply threads against. Dedup is handled by seen_ids.
-    cutoff   = time.time() - 6 * 3600
+    # 24-hour cutoff: fetch tweets from past 24h so we catch accounts that tweet
+    # infrequently. Dedup via seen_ids prevents re-sending old complaints.
+    cutoff   = time.time() - 24 * 3600
 
     # ── Step 1: Build account pool + rotate batch ─────────────────────────
     # Combine static + dynamic and rotate through a different 130-account
@@ -1389,7 +1389,7 @@ def fetch_issues(
         src_user = src.get("user", "")
         if not src_id:
             continue
-        replies = fetch_tweet_replies(src_id, session, max_age_hours=6)
+        replies = fetch_tweet_replies(src_id, session, max_age_hours=24)
         total_raw_replies += len(replies)
         for r in replies:
             rid = r.get("id", "")
