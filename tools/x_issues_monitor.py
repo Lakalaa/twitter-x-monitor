@@ -199,42 +199,48 @@ for _cat, _accs in _ACCOUNTS.items():
 
 _CASHTAG_RE = re.compile(r"\$[A-Z]{2,10}\b")
 
-# USER COMPLAINT — any of these in a reply = this is a user reporting a problem.
-# Intentionally broad: we want to catch any complaint, even vague ones.
+# USER COMPLAINT / QUESTION — catch anyone asking for help or reporting an issue.
+# This is intentionally very broad — a user with 0 followers asking "how do I
+# withdraw?" is exactly what we want. No engagement threshold, no popularity filter.
 _COMPLAINT_RE = re.compile(
     r"\b("
-    # Distress / help requests
-    r"help|please help|need help|anyone help|can.?t|cannot|not working|"
-    r"not able|unable|no response|still waiting|waiting for|support ticket|"
-    r"contacted|reached out|no reply|ignoring|"
-    # Transaction / fund issues
-    r"stuck|pending|failed|revert|reverted|not.?credited|missing|lost|gone|"
-    r"can.?t withdraw|withdrawal|deposit.?fail|not.?received|not.?showing|"
-    r"didn.?t arrive|never arrived|"
-    # Staking / yield
-    r"unstake|unstaking|staking.?issue|locked|stake.?lock|"
-    r"yield|apy|reward|not.?earning|earning.?nothing|"
-    r"validator|slash|penalt|"
-    # Locked / frozen
-    r"frozen|freeze|suspend|account.?lock|lock|access|"
+    # ── Question language (confused/lost users) ─────────────────────────────
+    r"how do i|how can i|how to|where do i|where can i|where is my|"
+    r"can anyone|can someone|does anyone|anyone know|anyone else|"
+    r"is there any|is anyone|why is my|why isn.?t|why won.?t|why did|"
+    r"what happened|what.?s happening|what.?s going on|"
+    r"any idea|any help|any advice|please advise|"
+    r"i need help|i need support|need assistance|"
+    # ── Basic help language ─────────────────────────────────────────────────
+    r"help|please help|need help|anyone help|"
+    r"no response|still waiting|waiting for|support ticket|"
+    r"contacted|reached out|no reply|ignoring|days? ago|weeks? ago|"
+    r"hours? ago|been waiting|still no|not resolved|"
+    # ── Transaction / fund issues ───────────────────────────────────────────
+    r"stuck|pending|failed|revert|reverted|not.?credited|missing|"
+    r"lost|gone|can.?t|cannot|not working|not able|unable|"
+    r"withdraw|withdrawal|deposit|not.?received|not.?showing|"
+    r"didn.?t arrive|never arrived|never got|never received|"
+    # ── Staking / yield ─────────────────────────────────────────────────────
+    r"unstake|unstaking|staking|locked|stake|"
+    r"yield|apy|reward|not.?earning|validator|slash|"
+    # ── Account / wallet issues ─────────────────────────────────────────────
+    r"frozen|freeze|suspend|account|locked out|"
     r"can.?t access|blocked|banned|"
-    # Money / fund issues
-    r"fund|balance|money|amount|token|coin|"
-    r"wrong amount|wrong balance|overcharged|charged.?twice|"
-    # Bridge / cross-chain
-    r"bridge|bridging|cross.?chain|transfer|"
-    # Wallet / gas
-    r"gas|nonce|approval|signature|"
     r"wallet|address|"
-    # Error language
+    # ── Transaction mechanics ───────────────────────────────────────────────
+    r"gas|nonce|approval|signature|transaction|tx|"
+    r"bridge|bridging|cross.?chain|transfer|swap|"
+    # ── Error language ──────────────────────────────────────────────────────
     r"error|bug|glitch|issue|problem|broken|"
-    r"why.?is|what.?happened|what.?is.?going|"
-    # General complaint language
+    # ── Complaint sentiment ─────────────────────────────────────────────────
     r"horrible|terrible|worst|scam|rip.?off|"
-    r"refund|compensation|"
-    # Network-specific issue language
-    r"ronin|litecoin|ltc|xrp|xrpl|solana|sol|base|subnet|"
-    r"arbitrum|optimism|polygon|zksync|bnb|bsc"
+    r"refund|compensation|money|funds|balance|"
+    r"wrong amount|overcharged|charged.?twice|"
+    # ── Network-name mentions (in reply context these signal an issue) ───────
+    r"ronin|litecoin|ltc|xrp|xrpl|solana|sol|"
+    r"base|arbitrum|optimism|polygon|zksync|bnb|bsc|"
+    r"ethereum|eth|bitcoin|btc"
     r")\b",
     re.IGNORECASE,
 )
@@ -399,14 +405,15 @@ def fetch_issues(
         time.sleep(0.4)
 
     # ── Step 2: Fetch reply threads ────────────────────────────────────────
-    # For each official tweet, use TweetDetail to get replies from ANY user.
-    # Sort by most replies/engagement first (those attract the most user complaints).
-    # Cap at 40 source tweets to control API usage.
-    reply_sources = sorted(
-        official_tweets,
-        key=lambda t: t.get("likes", 0) + t.get("retweets", 0),
-        reverse=True,
-    )[:40]
+    # Use TweetDetail on ALL fetched official tweets — not sorted by popularity.
+    # A tweet with 2 likes from @MetaMask support still has real users replying
+    # with issues. We want those low-engagement replies just as much as viral ones.
+    # Shuffle so every account gets a fair chance across cycles.
+    import random
+    reply_sources = list(official_tweets)
+    random.shuffle(reply_sources)
+    # Cap at 60 to control API usage per cycle (each call = 1 TweetDetail request)
+    reply_sources = reply_sources[:60]
 
     user_reply_tweets: list[dict] = []  # replies from random community users
 
@@ -451,9 +458,10 @@ def fetch_issues(
             continue
         if _is_spam(text):
             continue
-        # Accept: any complaint language OR any crypto-relevant content
-        # (in a reply context, even light mentions are worth surfacing)
-        if not (_is_complaint(text) or _is_trending(text) or _CASHTAG_RE.search(text)):
+        # In a reply context: accept ANY complaint/question language.
+        # We don't require crypto cashtags or trending keywords — a reply saying
+        # "how do I withdraw?" or "my transfer is stuck" is enough.
+        if not _is_complaint(text):
             continue
         bucket_a.append({
             "type":          "user_complaint",
