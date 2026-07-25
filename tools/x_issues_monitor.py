@@ -822,6 +822,9 @@ _COINGECKO_CATEGORIES = [
 
 # Account rotation state — scan a rotating batch each cycle instead of all at once
 _ROTATION_INDEX: int = 0
+
+# Last scan diagnostics — readable from app.py after each fetch_issues() call
+_LAST_SCAN_STATS: dict = {}
 _ROTATION_BATCH: int = 150  # accounts scanned per 5-min cycle (full pool covered every ~28 min)
 
 
@@ -1303,9 +1306,9 @@ def fetch_issues(
 
     session  = _make_session(auth, ct0)
     cache    = _load_user_id_cache()
-    # 3-hour cutoff: only fetch recent tweets — prevents replaying old tweets
-    # after Render restarts / deploys (the primary cause of duplicates).
-    cutoff   = time.time() - 3 * 3600
+    # 6-hour cutoff: fetch tweets from past 6 hours so each cycle has enough
+    # official posts to check reply threads against. Dedup is handled by seen_ids.
+    cutoff   = time.time() - 6 * 3600
 
     # ── Step 1: Build account pool + rotate batch ─────────────────────────
     # Combine static + dynamic and rotate through a different 130-account
@@ -1386,7 +1389,7 @@ def fetch_issues(
         src_user = src.get("user", "")
         if not src_id:
             continue
-        replies = fetch_tweet_replies(src_id, session, max_age_hours=3)
+        replies = fetch_tweet_replies(src_id, session, max_age_hours=6)
         total_raw_replies += len(replies)
         for r in replies:
             rid = r.get("id", "")
@@ -1414,6 +1417,7 @@ def fetch_issues(
     )
 
     # ── Step 3: Classify ──────────────────────────────────────────────────
+    global _LAST_SCAN_STATS
 
     bucket_a: list[dict] = []  # user complaint replies  ← PRIORITY
     bucket_b: list[dict] = []  # official urgent
@@ -1481,6 +1485,19 @@ def fetch_issues(
     bucket_b.sort(key=lambda x: x["likes"] + x["retweets"], reverse=True)
     # C: official trending — by engagement
     bucket_c.sort(key=lambda x: x["likes"] + x["retweets"], reverse=True)
+
+    _LAST_SCAN_STATS.update({
+        "batch_size":     len(all_accounts_to_scan),
+        "ids_resolved":   ids_resolved,
+        "ids_failed":     ids_failed,
+        "official_tweets": len(official_tweets),
+        "reply_threads":  len(reply_sources),
+        "raw_replies":    total_raw_replies,
+        "unique_replies": len(user_reply_tweets),
+        "bucket_a":       len(bucket_a),
+        "bucket_b":       len(bucket_b),
+        "bucket_c":       len(bucket_c),
+    })
 
     return bucket_a + bucket_b + bucket_c
 
