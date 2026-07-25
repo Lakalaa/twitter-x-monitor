@@ -326,6 +326,230 @@ _ACCOUNTS: dict[str, list[str]] = {
         "saylor", "BitcoinMagazine", "Bitcoin", "jack", "lopp",
     ],
 
+    # ── Centralized earn / savings / lending ──────────────────────────────
+    "cex_earn": [
+        "Nexo", "swissborg", "ledn_io", "hodlnaut",
+        "CelsiusNetwork", "BlockFi", "vauld_official",
+        "CoinLoanCom", "YouHodler", "abra_official",
+        "Matrixport_official", "WhaleFin_", "BabelFinance",
+        "CoinRabbit_io", "FinBlox", "Haru_Invest",
+    ],
+
+    # ── Regional / smaller CEXes ──────────────────────────────────────────
+    "cex_regional": [
+        "WazirXIndia", "CoinDCX", "ZebPay", "BitBnS",
+        "Bitkub_official", "TokoCrypto", "Coinstore_official",
+        "coincheck_jp", "bitFlyerUSA", "CoinoneOfficial",
+        "Luno", "YellowCardFin", "Paxful", "bitso",
+        "CoinJarSupport", "BTCMarkets_com",
+        "LocalBitcoins", "Remitano", "HodlHodl",
+        "RobinhoodApp", "CashApp", "Bittrex", "Poloniex",
+        "HitBTC", "WhiteBIT", "LATOKENcom",
+        "XT_com", "CoinW_official", "BitGet_Support",
+    ],
+
+    # ── Yield farming aggregators ─────────────────────────────────────────
+    "earn_yield": [
+        "beefyfinance", "HarvestFinance", "BadgerDAO",
+        "IdleFinance", "StakeDAO_", "PickleFinance",
+        "vesperfinance", "Gamma_Strategies", "ArrakisFinance",
+        "RangeProtocol", "ACryptoS", "AutoFarmNetwork",
+        "YieldYak", "Adamant_Finance", "sommfinance",
+        "AlphaVentureDAO", "concentratorDAO",
+    ],
+
+    # ── More lending / money markets ──────────────────────────────────────
+    "lending": [
+        "RadiantCapital", "WePiggy", "HundredFinance",
+        "NotionalFinance", "ExactlyProtocol",
+        "FringeFinance", "MELD_network", "StrikeFinance",
+        "flux_finance", "UwULend", "tapioca_dao",
+        "SonneFinance", "moonwell_fi", "PolixFinance",
+        "BenqiFinance", "ironbankofficial",
+    ],
+
+    # ── Options / structured products ─────────────────────────────────────
+    "options_defi": [
+        "PremiaFinance", "opyn_", "HegicProtocol",
+        "PanopticProtocol", "Thetanuts_fi", "Rysk_Finance",
+        "Dopex_io", "PsyFinance", "StrikeFinance",
+        "BufferFinance", "antfarm_finance",
+    ],
+
+    # ── More NFT projects (Ethereum) ──────────────────────────────────────
+    "nft_eth2": [
+        "worldofwomennft", "moonbirds", "VeeFriends",
+        "Meebits", "artblocks_io", "nounsdao",
+        "InvisibleFriends", "MutantCatsNFT", "HAPEPrime",
+        "CyberKongz", "Wolf_Game_NFT", "goblintown",
+        "DigiDaigaku", "degods", "y00tsNFT",
+        "OnChainMonkey", "NFTBoxOfficial", "ThinkingApes",
+        "CloneX_Support", "rtfkt",
+    ],
+
+    # ── NFT on other chains ───────────────────────────────────────────────
+    "nft_multichain": [
+        "NBATopShot", "Sorare", "AlienWorldsio",
+        "Splinterlands", "GodsUnchained", "GuildOfGuardians",
+        "PegaxyOfficial", "PlanetIX_io", "CometGame_io",
+        "ZedRun", "F1DeltaTime", "PolygonNFT",
+        "FamousFoxFed", "DripHaus", "SolanaNFT_",
+        "GeneticChain", "Solarians_", "aurory_game",
+    ],
+
+    # ── More launchpads ───────────────────────────────────────────────────
+    "launchpad2": [
+        "redkite_pad", "kommunitas_io", "EnjinStarter",
+        "TrustSwap", "Decubate_io", "MintedLab",
+        "TierBot_io", "BybitLaunchpad", "HuobiIncubator",
+        "OKXVentures", "KuCoinLabs", "MexcLaunchpad",
+        "Bounce_Finance", "CopperLaunch", "fjord_foundry",
+    ],
+
+    # ── Cross-chain infra ─────────────────────────────────────────────────
+    "cross_chain": [
+        "axelarcore", "PythNetwork", "ChainPort_io",
+        "Allbridge_io", "MayanFinance", "LiFi_io",
+        "SymbiosisFinance", "XYFinance_", "RangoExchange",
+        "OKU_trade", "Via_Protocol", "unizen_io",
+    ],
+
+    # ── DEX aggregators ───────────────────────────────────────────────────
+    "dex_agg": [
+        "1inchNetwork", "paraswap", "CowProtocol",
+        "KyberNetwork", "OdosProtocol", "hashflownetwork",
+        "DecentrEx", "SwapSpaceTeam", "ChangeNOW_io",
+        "StealthEX_io", "FixedFloat", "exolix_exchange",
+        "simpleswap_io", "changehero_io",
+    ],
+
+    # ── More TON ecosystem ────────────────────────────────────────────────
+    "ton2": [
+        "storm_trade", "evaa_protocol", "TonFi_io",
+        "TonkeeperWallet", "TonWhales", "tonstakers",
+        "Gatto_TON", "PunkCity_TON", "tgbtc_official",
+        "MyTonWallet", "TonTech_", "openleague_ton",
+    ],
+
+    # ── More Solana ecosystem ─────────────────────────────────────────────
+    "solana2": [
+        "parcl", "Realms_DAOs", "sns_dao",
+        "famousfoxes", "DripHaus", "tensor_hq",
+        "Solend", "switchboardxyz", "pyth_network",
+        "Clockworkxyz", "GenesysGo", "SolanaFM",
+        "HelloMoon_io", "step_finance",
+    ],
+
+    # ── P2P / OTC / payments apps ─────────────────────────────────────────
+    "p2p_otc": [
+        "Paxful", "LocalBitcoins", "Remitano",
+        "HodlHodl", "AgoraDEX", "LocalCryptos",
+        "Bisq_Network", "RoboSats_",
+    ],
+
+    # ── Crypto debit cards ────────────────────────────────────────────────
+    "crypto_cards": [
+        "crypto_com", "wirexapp", "crypterium_",
+        "cryptopayapp", "AdvancedCash_", "paybis",
+        "Monolith_web3", "FoldApp", "LoligoSystems",
+        "baanx_com", "PaybisCard",
+    ],
+
+    # ── More DeFi (misc protocols with large user bases) ─────────────────
+    "defi_misc": [
+        "reflexerfinance", "liquity_eth", "inverse_finance",
+        "TrueUSD", "USTprotocol", "TribeDAO",
+        "OlympusDAO", "KlimaDAO_official", "TempusFinance",
+        "ribbonfinance", "polynomialfi", "friktion_labs",
+        "CratD2C", "YAMFinance", "AlchemixFi",
+    ],
+
+    # ── More Arbitrum / OP / Base ecosystem ──────────────────────────────
+    "arb_op_base2": [
+        "RdpxV2", "traderjoexyz", "AbracadabraDefi",
+        "SperaxUSD", "JonesDAOfi", "UmamiFinance",
+        "HMXorg", "GMXBluebird", "AcalaNetwork",
+        "cap_finance", "rage_trade", "premia_blue",
+    ],
+
+    # ── Cosmos / IBC ecosystem (expanded) ────────────────────────────────
+    "cosmos2": [
+        "QuicksilverZone", "umee_", "CrescentHub_",
+        "Persistence_one", "mars_protocol",
+        "levanaprotocol", "WhiteWhale_fi",
+        "Kujira_Zone", "MilkyWay_Zone", "ICAprotocol",
+        "CoreumNetwork", "DYMension", "Composable_Fin",
+    ],
+
+    # ── Sui / Aptos ecosystem ─────────────────────────────────────────────
+    "sui_aptos": [
+        "SuiNetwork", "MystenLabs", "cetus_protocol",
+        "turbosfinance", "navi_protocol", "scallop_io",
+        "bucket_protocol", "aftermath_fi", "KriyaDEX",
+        "aptos_network", "ThalaLabs", "PancakeSwap",
+        "liquidswapDEX", "AptosLend", "MomentumSafe",
+    ],
+
+    # ── Polygon / zkEVM deeper ────────────────────────────────────────────
+    "polygon2": [
+        "0xPolygon", "0xPolygonDev", "UniswapProtocol",
+        "SushiSwap", "QuickswapDEX", "balancerlabs",
+        "OceanProtocol", "GnosisSafe", "polymarket",
+        "Superfluid_HQ", "FXDX_Exchange", "MMFinance_",
+        "ArborFinance", "MetaStreet_xyz",
+    ],
+
+    # ── More meme coins (all chains) ──────────────────────────────────────
+    "meme2": [
+        "wojak_coin", "LadysToken", "DegenToken_",
+        "Coq_Inu", "MogCoin_", "HarryPotterObama",
+        "OrdiToken", "SATS_token", "ShibariumTech",
+        "ChinaToken_", "catcoin_official",
+        "ToshiOnBase", "SonicToken_", "anon_base",
+    ],
+
+    # ── NFT infra / tools ─────────────────────────────────────────────────
+    "nft_infra": [
+        "opensea", "blur_io", "x2y2io",
+        "foundation", "SuperRare", "RaribleDotCom",
+        "KnownOrigin_io", "Async_Art", "NiftyGateway",
+        "ObjktCom", "Kalamint", "FxHashOfficial",
+        "NiftyDrops", "nftperp", "NFTfi",
+    ],
+
+    # ── Insurance / risk protocols ────────────────────────────────────────
+    "insurance": [
+        "NexusMutual", "InsurAce_io", "UnslashedFin",
+        "UnoRe_io", "CoverProtocol", "RiskHarbor",
+        "inSure_DeFi", "TidalFinance_",
+    ],
+
+    # ── Identity / DAO / governance tools ────────────────────────────────
+    "dao_infra": [
+        "Snapshot_labs", "SafeGlobal", "JuiceboxETH",
+        "tally_xyz", "aragon", "DAOhaus",
+        "collab_land", "coordinape_org", "GitcoinDAO",
+        "KarmaHQ_xyz", "rabbithole_gg",
+    ],
+
+    # ── More exchange support accounts ────────────────────────────────────
+    "exchange_support2": [
+        "HuobiGlobal", "HTXGlobal_Help", "BitfinexSupport",
+        "Bittrex_Support", "poloniex", "HitBTC_Support",
+        "Bitpanda_CS", "Bitvavo_", "NamiExchange",
+        "CoinexSupport", "BTSE_official", "IndodaxCom",
+        "VCC_Exchange", "ZoomexHQ", "WOO_X_Official",
+    ],
+
+    # ── More wallets ──────────────────────────────────────────────────────
+    "wallets3": [
+        "imTokenOfficial", "AlphaWallet", "Status_im",
+        "MyCrypto", "MycEtherWallet", "trusteeWallet",
+        "SteelWallet", "CoolWallet", "NGrave_io",
+        "Foundation_App", "PasskeysWallet", "tokenPocket",
+        "Coin98_Wallet", "BraveWallet",
+    ],
+
     # ── Perp / derivatives DEXes — users lose $ on liquidations/errors ───
     "perp_dex": [
         "HyperliquidX", "driftprotocol", "dYdX", "GainsNetwork",
@@ -440,7 +664,7 @@ _ACCOUNTS: dict[str, list[str]] = {
 
 _DYNAMIC_ACCOUNTS: list[str] = []
 _DYNAMIC_LAST_REFRESH: float = 0.0
-_DYNAMIC_REFRESH_INTERVAL: float = 4 * 3600  # 4 hours
+_DYNAMIC_REFRESH_INTERVAL: float = 2 * 3600  # 2 hours — pick up new viral projects faster
 
 # CoinGecko categories to pull top coins from (each returns up to 250 coins)
 _COINGECKO_CATEGORIES = [
@@ -466,7 +690,7 @@ _COINGECKO_CATEGORIES = [
 
 # Account rotation state — scan a rotating batch each cycle instead of all at once
 _ROTATION_INDEX: int = 0
-_ROTATION_BATCH: int = 130  # accounts scanned per 5-min cycle
+_ROTATION_BATCH: int = 150  # accounts scanned per 5-min cycle (full pool covered every ~28 min)
 
 
 def _cg_get(url: str, timeout: int = 10) -> dict:
