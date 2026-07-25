@@ -21,7 +21,7 @@ BEARER = (
 
 _QID_USER_BY_SCREEN   = "2qvSHpkWTMS9i0zJAwDNiA"
 _QID_USER_TWEETS      = "RIylB10EGWyBSs4ZXpQjCw"
-_QID_TWEET_DETAIL     = "VWFGPVAGkZMGRKGe3GFFnA"   # confirmed working Jul-2026
+_QID_TWEET_DETAIL     = "Lq1caG5YPcdhpTdS2ZRx7Q"   # refreshed Jul-2026 from main bundle
 
 _USER_FEATURES = {
     "hidden_profile_subscriptions_enabled": True,
