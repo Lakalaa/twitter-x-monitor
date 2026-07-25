@@ -681,11 +681,17 @@ def start_scheduler():
     # intentionally NOT scheduled — user wants Telegram alerts sourced only
     # from live X/Twitter activity, not third-party news aggregators.
     schedule.every(30).minutes.do(run_feed_check_sync)
-    schedule.every(5).minutes.do(run_xissues_check_sync)
-    # Run once immediately on startup
     threading.Thread(target=run_feed_check_sync, daemon=True).start()
-    threading.Thread(target=run_xissues_check_sync, daemon=True).start()
-    add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 5 min (user complaints only)")
+
+    # X-issues scanner uses the Twitter auth token — only run on Render so
+    # the Replit dev server doesn't compete for rate limits with production.
+    on_render = bool(os.environ.get("RENDER_EXTERNAL_URL", ""))
+    if on_render:
+        schedule.every(5).minutes.do(run_xissues_check_sync)
+        threading.Thread(target=run_xissues_check_sync, daemon=True).start()
+        add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 5 min (user complaints only)")
+    else:
+        add_log(f"Scheduler started (dev mode) — Twitter every {interval} min, Feed every 30 min. X-issues DISABLED on dev to preserve Render token rate limits.")
     while STATE["running"]:
         schedule.run_pending()
         time.sleep(15)
