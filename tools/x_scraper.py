@@ -65,6 +65,7 @@ _USER_ID_CACHE_FILE = os.path.join(os.path.dirname(__file__), "x_user_id_cache.j
 # every cycle hammering blocked accounts. Resets naturally as windows expire.
 _RATE_LIMIT_COOLDOWN: dict[str, float] = {}   # lower(screen_name) → unblocked_at
 _RL_WINDOW = 16 * 60  # 16 min — Twitter's 15-min window + 1-min buffer
+_LAST_FETCH_STATUS: dict[str, object] = {}   # lower(screen_name) → last HTTP result (debug)
 
 def _is_rl(name: str) -> bool:
     return time.time() < _RATE_LIMIT_COOLDOWN.get(name.lower(), 0)
@@ -204,6 +205,7 @@ def fetch_user_tweets(user_id: str, screen_name: str, session, count: int = 20) 
             import logging
             logging.warning(f"x_scraper: rate-limited (429) for @{screen_name}, cooldown 16 min")
             _mark_rl(screen_name)
+            _LAST_FETCH_STATUS[screen_name.lower()] = 429
             return []
         if r.status_code == 200:
             tweets = _find_tweets(r.json())
@@ -211,12 +213,15 @@ def fetch_user_tweets(user_id: str, screen_name: str, session, count: int = 20) 
                 if not t["user"]:
                     t["user"] = screen_name
                 t["url"] = f"https://x.com/{t['user']}/status/{t['id']}" if t["id"] else ""
+            _LAST_FETCH_STATUS[screen_name.lower()] = f"200-{len(tweets)}tweets"
             return tweets
         import logging
         logging.warning(f"x_scraper: UserTweets HTTP {r.status_code} for @{screen_name}")
+        _LAST_FETCH_STATUS[screen_name.lower()] = r.status_code
     except Exception as _e:
         import logging
         logging.warning(f"x_scraper: UserTweets exception for @{screen_name}: {_e}")
+        _LAST_FETCH_STATUS[screen_name.lower()] = f"exc:{type(_e).__name__}"
     return []
 
 
