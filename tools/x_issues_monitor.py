@@ -1138,38 +1138,69 @@ def _is_complaint(text: str) -> bool:
 
 def _is_reply_complaint(text: str) -> bool:
     """
-    Relaxed check for reply context (someone replying under an official crypto account post).
-    The reply context itself implies personal stake.
+    Check for a real user complaint in a reply under an official crypto account post.
+    The reply context itself already implies personal stake, so we're less strict than
+    the top-level _is_complaint, but we still require real issue signals — not just
+    any negative word.
+
     Accepts:
-      (a) personal pronoun + problem word (strict match from _is_complaint)
-      (b) help question pattern
-      (c) STRONG problem phrase — unambiguous crypto issue with no pronoun required
-          e.g. "withdrawal stuck 3 days", "tx failed", "can't withdraw", "funds missing"
-    Does NOT accept bare problem words like "failed" or "missing" without crypto/financial context.
+      (a) personal pronoun + problem word  (e.g. "my withdrawal is stuck")
+      (b) direct help question             (e.g. "how do I unstake?")
+      (c) strong standalone crypto phrase  (e.g. "withdrawal stuck 3 days", "tx failed",
+          "funds missing", "account suspended", "support not responding")
+      (d) urgency + crypto context         (e.g. "please help, 3 days now no response")
     """
     if _is_complaint(text):
         return True
+
     # Strong standalone crypto-issue phrases — unambiguous even without a personal pronoun
     _STRONG_REPLY_RE = re.compile(
         r"\b("
-        r"withdraw(?:al)?\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|working|showing))|"
-        r"deposit\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|showing))|"
+        # Stuck/pending with time
         r"(?:stuck|pending)\s+(?:for\s+)?\d+\s+(?:day|hour|week)|"
         r"(?:still|been)\s+(?:waiting|pending)\s+(?:for\s+)?\d+|"
-        r"(?:still|been)\s+waiting\s+(?:for\s+)?(?:day|hour|week|month)|"
+        r"(?:still|been)\s+waiting\s+(?:for\s+)?(?:a\s+)?(?:day|hour|week|month)|"
+        r"(?:\d+\s+(?:day|hour|week)s?\s+(?:and\s+)?(?:still|no|without))|"
+        # Withdrawal / deposit specific
+        r"withdraw(?:al)?\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|working|showing|arrived))|"
+        r"deposit\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|showing|arrived))|"
+        # Funds missing / gone
         r"funds?\s+(?:gone|missing|lost|stuck|not\s+(?:received|arrived|credited|showing))|"
         r"money\s+(?:gone|missing|lost|stuck|not\s+(?:received|arrived|credited))|"
-        r"account\s+(?:banned|suspended|frozen|hacked|compromised)|"
+        r"(?:eth|btc|sol|bnb|usdt|usdc|tokens?|coins?)\s+(?:gone|missing|lost|stuck|not\s+received|never\s+arrived)|"
+        # Account issues
+        r"account\s+(?:banned|suspended|frozen|hacked|compromised|locked)|"
+        # Transaction issues
         r"tx\s+(?:failed|reverted|stuck|dropped|not\s+(?:processed|confirmed))|"
         r"transaction\s+(?:failed|reverted|stuck|not\s+(?:processed|confirmed|received))|"
-        r"can.?t\s+(?:withdraw|deposit|access\s+my|stake|unstake|swap|bridge|connect\s+wallet)|"
-        r"unable\s+to\s+(?:withdraw|deposit|access|stake|unstake|swap|connect)|"
-        r"(?:eth|btc|sol|bnb|usdt|usdc|funds?|tokens?|coins?)\s+(?:gone|missing|lost|stuck|not\s+received|never\s+arrived)|"
-        r"bridge\s+(?:stuck|failed|not\s+(?:working|processed))|"
+        # Can't do action
+        r"can.?t\s+(?:withdraw|deposit|access|stake|unstake|swap|bridge|login|sign\s*in|connect)|"
+        r"unable\s+to\s+(?:withdraw|deposit|access|stake|unstake|swap|bridge|login|connect)|"
+        r"not\s+able\s+to\s+(?:withdraw|deposit|access|stake|unstake|swap)|"
+        # Bridge / swap
+        r"bridge\s+(?:stuck|failed|not\s+(?:working|processed|arrived))|"
         r"swap\s+(?:failed|stuck|not\s+(?:working|completed))|"
-        r"kyc\s+(?:rejected|failed|stuck|not\s+(?:approved|processed))|"
-        r"no\s+response\s+(?:from\s+)?(?:support|team|customer)|"
-        r"support\s+(?:not\s+responding|ignoring|never\s+replies?)"
+        # KYC / verification
+        r"kyc\s+(?:rejected|failed|stuck|not\s+(?:approved|processed|verified))|"
+        r"verification\s+(?:rejected|failed|stuck|not\s+(?:approved|processed))|"
+        # Support not responding
+        r"no\s+response\s+(?:from\s+)?(?:support|team|customer\s+service)|"
+        r"support\s+(?:not\s+responding|ignoring\s+me|never\s+replies?|not\s+helpful)|"
+        r"ticket\s+(?:ignored|no\s+response|still\s+open|unanswered)|"
+        # Order / trade issues
+        r"order\s+(?:failed|rejected|stuck|not\s+(?:filled|executed|processed))|"
+        r"trade\s+(?:failed|not\s+executed|stuck)|"
+        # Exchange specific user complaints
+        r"withdrawal\s+(?:request|fee|limit|issue)|"
+        r"deposit\s+(?:not\s+showing|missing|disappeared)|"
+        r"login\s+(?:failed|not\s+working|issue|problem)|"
+        r"2fa\s+(?:not\s+working|issue|locked)|"
+        r"password\s+reset\s+(?:not\s+working|issue)|"
+        # Common short complaint patterns
+        r"please\s+help\s+(?:me|us)\b|"
+        r"anyone\s+(?:else\s+)?(?:having|experiencing)\s+(?:this|same|issue|problem)|"
+        r"same\s+(?:issue|problem)\s+here|"
+        r"this\s+is\s+(?:a\s+)?(?:scam|fraud|ridiculous|unacceptable)"
         r")\b",
         re.IGNORECASE,
     )
@@ -1334,21 +1365,35 @@ def fetch_issues(
     cutoff   = time.time() - 24 * 3600
 
     # ── Step 1: Build account pool + rotate batch ─────────────────────────
-    # Category-balanced rotation: every cycle picks ONE account from EACH of the
-    # 65+ categories, rotating WHICH account within each category each cycle.
-    # This guarantees every single category (CEX, wallets, DeFi, L2, NFT, bridges…)
-    # is represented every 5 minutes — no project family dominates.
+    # Two-tier approach:
+    #   Tier 1 (always): ~20 highest-volume accounts guaranteed every cycle
+    #   Tier 2 (rotating): category-balanced, 1 per category from the remaining 65+ categories
+    # This ensures Binance/Coinbase/MetaMask (hundreds of complaints/day) are always
+    # scanned while still cycling through every other project category for variety.
     import random as _rand
+
+    _PRIORITY_ALWAYS = [
+        # CEX support — highest complaint volume on all of Twitter
+        "BinanceHelpDesk", "CoinbaseSupport", "KrakenSupport", "Bybit_CS",
+        "OKXSupport", "cryptocom_cares",
+        # Wallet support
+        "MetaMask_Support", "TrustWalletApp", "LedgerSupport", "Phantom",
+        # Top DeFi / bridges with frequent real complaints
+        "Uniswap", "AaveAave", "JupiterExchange", "StargateFinance",
+        # Top L2s
+        "arbitrum", "base", "optimismFND",
+        # Stablecoins — depeg/stuck complaints
+        "Tether_to", "circle",
+    ]
 
     dynamic_new = [h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set]
     bg_new      = [h for h in _BG_ENRICHED     if h.lower() not in _seen_set]
 
-    # Build a seen set for dedup
-    extra_seen = {h.lower() for h in dynamic_new + bg_new}
+    # Build batch starting with always-scan accounts
+    batch_set: set[str] = {a.lower() for a in _PRIORITY_ALWAYS}
+    batch: list[str] = list(_PRIORITY_ALWAYS)
 
     # Category-balanced pick: one account per category, rotating within each
-    batch_set: set[str] = set()
-    batch: list[str] = []
     for i, (cat, cat_accounts) in enumerate(_ACCOUNTS.items()):
         if not cat_accounts:
             continue
