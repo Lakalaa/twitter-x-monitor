@@ -1197,10 +1197,7 @@ def _is_reply_complaint(text: str) -> bool:
         r"2fa\s+(?:not\s+working|issue|locked)|"
         r"password\s+reset\s+(?:not\s+working|issue)|"
         # Common short complaint patterns
-        r"please\s+help\s+(?:me|us)\b|"
-        r"anyone\s+(?:else\s+)?(?:having|experiencing)\s+(?:this|same|issue|problem)|"
-        r"same\s+(?:issue|problem)\s+here|"
-        r"this\s+is\s+(?:a\s+)?(?:scam|fraud|ridiculous|unacceptable)"
+        r"this\s+is\s+(?:a\s+)?(?:scam|fraud|rug\s*pull)"
         r")\b",
         re.IGNORECASE,
     )
@@ -1507,10 +1504,14 @@ def fetch_issues(
     bucket_c: list[dict] = []  # official trending
 
     # --- Process user reply tweets (Bucket A) ---
-    # Cap: max 2 complaints per source account per cycle — prevents one
-    # active project (e.g. Polymarket) from flooding the Telegram feed.
+    # Two-level cap to enforce variety across ALL projects:
+    #   Per-source cap:   max 1 per official account → stops @Binance flooding
+    #   Per-category cap: max 1 per category (exchanges/wallets/DeFi/bridges/etc.)
+    #                     so every category gets a turn even across the same cycle
     _per_source_count: dict[str, int] = {}
-    _PER_SOURCE_CAP = 2
+    _per_cat_count:    dict[str, int] = {}
+    _PER_SOURCE_CAP = 1   # 1 complaint per official account per cycle
+    _PER_CAT_CAP    = 1   # 1 complaint per category per cycle
 
     for t in user_reply_tweets:
         text = t.get("text", "")
@@ -1522,9 +1523,13 @@ def fetch_issues(
         if not _is_reply_complaint(text):
             continue
         src = t.get("reply_to_user", "").lower()
+        cat = t.get("reply_to_cat", t.get("source_cat", "misc"))
         if _per_source_count.get(src, 0) >= _PER_SOURCE_CAP:
             continue
+        if _per_cat_count.get(cat, 0) >= _PER_CAT_CAP:
+            continue
         _per_source_count[src] = _per_source_count.get(src, 0) + 1
+        _per_cat_count[cat]    = _per_cat_count.get(cat, 0) + 1
         bucket_a.append({
             "type":          "user_complaint",
             "category":      t.get("reply_to_cat", "misc"),
