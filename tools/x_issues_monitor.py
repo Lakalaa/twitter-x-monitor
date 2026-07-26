@@ -1311,23 +1311,44 @@ def fetch_issues(
     cutoff   = time.time() - 24 * 3600
 
     # ── Step 1: Build account pool + rotate batch ─────────────────────────
-    # Combine static + dynamic and rotate through a different 130-account
-    # window each cycle — covers full pool every ~15 min at 5-min intervals,
-    # surfaces different projects each run rather than always the same names.
+    # Always include the highest-complaint accounts in every cycle so we surface
+    # issues from the biggest platforms every 5 minutes, not just once per ~100 min.
+    # Remaining slots rotate through the full pool to cover smaller projects too.
+    _PRIORITY_ALWAYS = [
+        # CEX support (highest complaint volume)
+        "BinanceHelpDesk", "binance", "CoinbaseSupport", "coinbase",
+        "KrakenSupport", "krakenfx", "Bybit_CS", "Bybit_Official",
+        "OKXSupport", "OKX", "cryptocom_cares", "crypto_com",
+        # Wallet support
+        "MetaMask_Support", "MetaMask", "TrustWalletApp", "LedgerSupport",
+        "phantom", "RabbyWallet",
+        # Top DeFi / DEX
+        "Uniswap", "AaveAave", "JupiterExchange", "GMX_IO",
+        # Top L1 / L2
+        "arbitrum", "optimismFND", "0xPolygon", "base",
+        # Bridges & aggregators
+        "StargateFinance", "LayerZero_Core", "across_protocol",
+    ]
+    priority_set = {a.lower() for a in _PRIORITY_ALWAYS}
+
     import random as _rand
     dynamic_new = [h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set]
     bg_new      = [h for h in _BG_ENRICHED     if h.lower() not in _seen_set]
     full_pool   = _ALL_ACCOUNTS + dynamic_new + bg_new
 
-    # Deterministic rotation: advance index each call
-    pool_size  = len(full_pool)
-    batch_size = min(_ROTATION_BATCH, pool_size)
-    start      = (_ROTATION_INDEX * batch_size) % max(pool_size, 1)
-    batch      = full_pool[start : start + batch_size]
-    if len(batch) < batch_size:
-        batch += full_pool[: batch_size - len(batch)]
+    # Rotating pool = everything NOT in the priority always-on set
+    rotating_pool = [h for h in full_pool if h.lower() not in priority_set]
+
+    # Fill: always-on accounts first, then rotating slots
+    rotate_slots = max(0, _ROTATION_BATCH - len(_PRIORITY_ALWAYS))
+    pool_size    = len(rotating_pool)
+    start        = (_ROTATION_INDEX * rotate_slots) % max(pool_size, 1)
+    rotating_batch = rotating_pool[start : start + rotate_slots]
+    if len(rotating_batch) < rotate_slots:
+        rotating_batch += rotating_pool[: rotate_slots - len(rotating_batch)]
     _ROTATION_INDEX += 1
-    # Shuffle within batch so different accounts get first shot at the reply cap
+
+    batch = list(_PRIORITY_ALWAYS) + rotating_batch
     _rand.shuffle(batch)
     all_accounts_to_scan = batch
 
