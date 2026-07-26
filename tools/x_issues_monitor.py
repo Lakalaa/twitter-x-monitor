@@ -1587,6 +1587,13 @@ def fetch_issues(
     # C: official trending — by engagement
     bucket_c.sort(key=lambda x: x["likes"] + x["retweets"], reverse=True)
 
+    # Expose per-account fetch statuses for debugging
+    try:
+        from x_scraper import _LAST_FETCH_STATUS as _fetch_debug
+        fetch_debug_sample = dict(list(_fetch_debug.items())[:20])
+    except Exception:
+        fetch_debug_sample = {}
+
     _LAST_SCAN_STATS.update({
         "batch_size":     len(all_accounts_to_scan),
         "ids_resolved":   ids_resolved,
@@ -1598,6 +1605,7 @@ def fetch_issues(
         "bucket_a":       len(bucket_a),
         "bucket_b":       len(bucket_b),
         "bucket_c":       len(bucket_c),
+        "fetch_debug":    fetch_debug_sample,
     })
 
     return bucket_a + bucket_b + bucket_c
