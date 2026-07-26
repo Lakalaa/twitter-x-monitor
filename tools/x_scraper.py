@@ -212,8 +212,11 @@ def fetch_user_tweets(user_id: str, screen_name: str, session, count: int = 20) 
                     t["user"] = screen_name
                 t["url"] = f"https://x.com/{t['user']}/status/{t['id']}" if t["id"] else ""
             return tweets
-    except Exception:
-        pass
+        import logging
+        logging.warning(f"x_scraper: UserTweets HTTP {r.status_code} for @{screen_name}")
+    except Exception as _e:
+        import logging
+        logging.warning(f"x_scraper: UserTweets exception for @{screen_name}: {_e}")
     return []
 
 
