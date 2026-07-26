@@ -707,9 +707,9 @@ def start_scheduler():
     # the Replit dev server doesn't compete for rate limits with production.
     on_render = bool(os.environ.get("RENDER_EXTERNAL_URL", ""))
     if on_render:
-        schedule.every(5).minutes.do(run_xissues_check_sync)
+        schedule.every(15).minutes.do(run_xissues_check_sync)
         threading.Thread(target=run_xissues_check_sync, daemon=True).start()
-        add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 5 min (user complaints only)")
+        add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 15 min (user complaints only)")
     else:
         add_log(f"Scheduler started (dev mode) — Twitter every {interval} min, Feed every 30 min. X-issues DISABLED on dev to preserve Render token rate limits.")
     while STATE["running"]:
