@@ -1369,39 +1369,46 @@ def fetch_issues(
     # scanned while still cycling through every other project category for variety.
     import random as _rand
 
+    # High-volume accounts with daily complaints — always scanned every cycle.
+    # Keep this list SHORT (≤12) so we stay well under the UserTweets rate limit.
     _PRIORITY_ALWAYS = [
-        # CEX support — highest complaint volume on all of Twitter
         "BinanceHelpDesk", "CoinbaseSupport", "KrakenSupport", "Bybit_CS",
-        "OKXSupport", "cryptocom_cares",
-        # Wallet support
-        "MetaMask_Support", "TrustWalletApp", "LedgerSupport", "Phantom",
-        # Top DeFi / bridges with frequent real complaints
-        "Uniswap", "AaveAave", "JupiterExchange", "StargateFinance",
-        # Top L2s
-        "arbitrum", "base", "optimismFND",
-        # Stablecoins — depeg/stuck complaints
-        "Tether_to", "circle",
+        "MetaMask_Support", "TrustWalletApp", "LedgerSupport",
+        "AaveAave", "JupiterExchange", "arbitrum", "base", "circle",
     ]
+    # Rotating slots: pick 18 accounts from ALL 65 categories this cycle,
+    # cycling which account and which subset of categories each time.
+    # 12 priority + 18 rotating = 30 total → stays well under rate limit.
+    _ROTATE_SLOTS = 18
 
     dynamic_new = [h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set]
     bg_new      = [h for h in _BG_ENRICHED     if h.lower() not in _seen_set]
 
-    # Build batch starting with always-scan accounts
+    # Build batch: priority first, then rotating category picks
     batch_set: set[str] = {a.lower() for a in _PRIORITY_ALWAYS}
     batch: list[str] = list(_PRIORITY_ALWAYS)
 
-    # Category-balanced pick: one account per category, rotating within each
-    for i, (cat, cat_accounts) in enumerate(_ACCOUNTS.items()):
+    # Rotate through all categories evenly. Each cycle we advance by _ROTATE_SLOTS
+    # so every category appears roughly once every (65 / 18) ≈ 4 cycles.
+    cat_list = list(_ACCOUNTS.items())
+    num_cats = len(cat_list)
+    added = 0
+    for step in range(num_cats):
+        if added >= _ROTATE_SLOTS:
+            break
+        cat_idx = (_ROTATION_INDEX * _ROTATE_SLOTS + step) % num_cats
+        cat, cat_accounts = cat_list[cat_idx]
         if not cat_accounts:
             continue
-        pick_idx = (_ROTATION_INDEX + i) % len(cat_accounts)
+        pick_idx = (_ROTATION_INDEX) % len(cat_accounts)
         pick = cat_accounts[pick_idx]
         if pick.lower() not in batch_set:
             batch_set.add(pick.lower())
             batch.append(pick)
+            added += 1
 
     # Also fold in dynamic/enriched accounts (new ones discovered at runtime)
-    for h in dynamic_new + bg_new:
+    for h in (dynamic_new + bg_new)[:4]:   # cap extra to keep total ≤ 35
         if h.lower() not in batch_set:
             batch_set.add(h.lower())
             batch.append(h)
