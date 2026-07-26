@@ -1139,18 +1139,41 @@ def _is_complaint(text: str) -> bool:
 def _is_reply_complaint(text: str) -> bool:
     """
     Relaxed check for reply context (someone replying under an official crypto account post).
-    The reply context itself implies personal stake — we only need a problem signal, not a pronoun.
+    The reply context itself implies personal stake.
     Accepts:
       (a) personal pronoun + problem word (strict match from _is_complaint)
       (b) help question pattern
-      (c) problem word alone — "withdrawal stuck", "bridge not working", "failed transaction"
-    This catches real complaints like "still pending 3 days", "tx reverted", "can't unstake"
-    that don't use "I/my" explicitly.
+      (c) STRONG problem phrase — unambiguous crypto issue with no pronoun required
+          e.g. "withdrawal stuck 3 days", "tx failed", "can't withdraw", "funds missing"
+    Does NOT accept bare problem words like "failed" or "missing" without crypto/financial context.
     """
     if _is_complaint(text):
         return True
-    # In reply context: problem keyword alone is enough
-    if _HAS_PROBLEM_RE.search(text):
+    # Strong standalone crypto-issue phrases — unambiguous even without a personal pronoun
+    _STRONG_REPLY_RE = re.compile(
+        r"\b("
+        r"withdraw(?:al)?\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|working|showing))|"
+        r"deposit\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|showing))|"
+        r"(?:stuck|pending)\s+(?:for\s+)?\d+\s+(?:day|hour|week)|"
+        r"(?:still|been)\s+(?:waiting|pending)\s+(?:for\s+)?\d+|"
+        r"(?:still|been)\s+waiting\s+(?:for\s+)?(?:day|hour|week|month)|"
+        r"funds?\s+(?:gone|missing|lost|stuck|not\s+(?:received|arrived|credited|showing))|"
+        r"money\s+(?:gone|missing|lost|stuck|not\s+(?:received|arrived|credited))|"
+        r"account\s+(?:banned|suspended|frozen|hacked|compromised)|"
+        r"tx\s+(?:failed|reverted|stuck|dropped|not\s+(?:processed|confirmed))|"
+        r"transaction\s+(?:failed|reverted|stuck|not\s+(?:processed|confirmed|received))|"
+        r"can.?t\s+(?:withdraw|deposit|access\s+my|stake|unstake|swap|bridge|connect\s+wallet)|"
+        r"unable\s+to\s+(?:withdraw|deposit|access|stake|unstake|swap|connect)|"
+        r"(?:eth|btc|sol|bnb|usdt|usdc|funds?|tokens?|coins?)\s+(?:gone|missing|lost|stuck|not\s+received|never\s+arrived)|"
+        r"bridge\s+(?:stuck|failed|not\s+(?:working|processed))|"
+        r"swap\s+(?:failed|stuck|not\s+(?:working|completed))|"
+        r"kyc\s+(?:rejected|failed|stuck|not\s+(?:approved|processed))|"
+        r"no\s+response\s+(?:from\s+)?(?:support|team|customer)|"
+        r"support\s+(?:not\s+responding|ignoring|never\s+replies?)"
+        r")\b",
+        re.IGNORECASE,
+    )
+    if _STRONG_REPLY_RE.search(text):
         return True
     return False
 
@@ -1311,46 +1334,40 @@ def fetch_issues(
     cutoff   = time.time() - 24 * 3600
 
     # ── Step 1: Build account pool + rotate batch ─────────────────────────
-    # Always include the highest-complaint accounts in every cycle so we surface
-    # issues from the biggest platforms every 5 minutes, not just once per ~100 min.
-    # Remaining slots rotate through the full pool to cover smaller projects too.
-    _PRIORITY_ALWAYS = [
-        # CEX support (highest complaint volume)
-        "BinanceHelpDesk", "binance", "CoinbaseSupport", "coinbase",
-        "KrakenSupport", "krakenfx", "Bybit_CS", "Bybit_Official",
-        "OKXSupport", "OKX", "cryptocom_cares", "crypto_com",
-        # Wallet support
-        "MetaMask_Support", "MetaMask", "TrustWalletApp", "LedgerSupport",
-        "phantom", "RabbyWallet",
-        # Top DeFi / DEX
-        "Uniswap", "AaveAave", "JupiterExchange", "GMX_IO",
-        # Top L1 / L2
-        "arbitrum", "optimismFND", "0xPolygon", "base",
-        # Bridges & aggregators
-        "StargateFinance", "LayerZero_Core", "across_protocol",
-    ]
-    priority_set = {a.lower() for a in _PRIORITY_ALWAYS}
-
+    # Category-balanced rotation: every cycle picks ONE account from EACH of the
+    # 65+ categories, rotating WHICH account within each category each cycle.
+    # This guarantees every single category (CEX, wallets, DeFi, L2, NFT, bridges…)
+    # is represented every 5 minutes — no project family dominates.
     import random as _rand
+
     dynamic_new = [h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set]
     bg_new      = [h for h in _BG_ENRICHED     if h.lower() not in _seen_set]
-    full_pool   = _ALL_ACCOUNTS + dynamic_new + bg_new
 
-    # Rotating pool = everything NOT in the priority always-on set
-    rotating_pool = [h for h in full_pool if h.lower() not in priority_set]
+    # Build a seen set for dedup
+    extra_seen = {h.lower() for h in dynamic_new + bg_new}
 
-    # Fill: always-on accounts first, then rotating slots
-    rotate_slots = max(0, _ROTATION_BATCH - len(_PRIORITY_ALWAYS))
-    pool_size    = len(rotating_pool)
-    start        = (_ROTATION_INDEX * rotate_slots) % max(pool_size, 1)
-    rotating_batch = rotating_pool[start : start + rotate_slots]
-    if len(rotating_batch) < rotate_slots:
-        rotating_batch += rotating_pool[: rotate_slots - len(rotating_batch)]
+    # Category-balanced pick: one account per category, rotating within each
+    batch_set: set[str] = set()
+    batch: list[str] = []
+    for i, (cat, cat_accounts) in enumerate(_ACCOUNTS.items()):
+        if not cat_accounts:
+            continue
+        pick_idx = (_ROTATION_INDEX + i) % len(cat_accounts)
+        pick = cat_accounts[pick_idx]
+        if pick.lower() not in batch_set:
+            batch_set.add(pick.lower())
+            batch.append(pick)
+
+    # Also fold in dynamic/enriched accounts (new ones discovered at runtime)
+    for h in dynamic_new + bg_new:
+        if h.lower() not in batch_set:
+            batch_set.add(h.lower())
+            batch.append(h)
+
     _ROTATION_INDEX += 1
-
-    batch = list(_PRIORITY_ALWAYS) + rotating_batch
     _rand.shuffle(batch)
     all_accounts_to_scan = batch
+    pool_size = len(_ALL_ACCOUNTS) + len(dynamic_new) + len(bg_new)
 
     logging.info(
         f"x_issues_monitor: scanning {len(all_accounts_to_scan)} accounts "
@@ -1445,6 +1462,11 @@ def fetch_issues(
     bucket_c: list[dict] = []  # official trending
 
     # --- Process user reply tweets (Bucket A) ---
+    # Cap: max 2 complaints per source account per cycle — prevents one
+    # active project (e.g. Polymarket) from flooding the Telegram feed.
+    _per_source_count: dict[str, int] = {}
+    _PER_SOURCE_CAP = 2
+
     for t in user_reply_tweets:
         text = t.get("text", "")
         tid  = t.get("id", "")
@@ -1452,11 +1474,12 @@ def fetch_issues(
             continue
         if _is_spam(text):
             continue
-        # In a reply context: relaxed check — problem word alone is enough.
-        # We don't require personal pronouns since replying to an official post
-        # already signals personal context. "withdrawal stuck", "tx failed" etc.
         if not _is_reply_complaint(text):
             continue
+        src = t.get("reply_to_user", "").lower()
+        if _per_source_count.get(src, 0) >= _PER_SOURCE_CAP:
+            continue
+        _per_source_count[src] = _per_source_count.get(src, 0) + 1
         bucket_a.append({
             "type":          "user_complaint",
             "category":      t.get("reply_to_cat", "misc"),
