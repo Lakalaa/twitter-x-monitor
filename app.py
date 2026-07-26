@@ -707,6 +707,41 @@ def start_scheduler():
     # the Replit dev server doesn't compete for rate limits with production.
     on_render = bool(os.environ.get("RENDER_EXTERNAL_URL", ""))
     if on_render:
+        # Warmup: pre-cache user IDs for priority accounts before the first scan.
+        # This ensures BinanceHelpDesk, MetaMask etc. are always resolved even
+        # on a fresh deploy when the disk cache is empty.
+        def _warmup_priority_ids():
+            try:
+                import sys as _sys
+                _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+                from x_scraper import _make_session, _load_creds, get_user_id, _load_user_id_cache, _save_user_id_cache
+                auth, ct0 = _load_creds()
+                if not auth or not ct0:
+                    return
+                session = _make_session(auth, ct0)
+                cache = _load_user_id_cache()
+                priority = [
+                    "BinanceHelpDesk", "CoinbaseSupport", "KrakenSupport", "Bybit_CS",
+                    "MetaMask_Support", "TrustWalletApp", "LedgerSupport",
+                    "AaveAave", "JupiterExchange", "arbitrum", "base", "circle",
+                    "OKXSupport", "Phantom", "Uniswap", "Tether_to",
+                ]
+                resolved = 0
+                for acct in priority:
+                    if acct.lower() not in cache:
+                        uid = get_user_id(acct, session, cache)
+                        if uid:
+                            resolved += 1
+                            time.sleep(0.6)   # gentle pacing — no rush at startup
+                if resolved:
+                    _save_user_id_cache(cache)
+                    add_log(f"X issues: pre-cached {resolved} priority account IDs")
+            except Exception as _e:
+                add_log(f"X issues warmup error: {_e}")
+
+        threading.Thread(target=_warmup_priority_ids, daemon=True).start()
+        time.sleep(12)   # let warmup finish before first scan fires
+
         schedule.every(15).minutes.do(run_xissues_check_sync)
         threading.Thread(target=run_xissues_check_sync, daemon=True).start()
         add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 15 min (user complaints only)")
