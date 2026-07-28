@@ -820,8 +820,38 @@ _COINGECKO_CATEGORIES = [
     "new-cryptocurrencies",
 ]
 
-# Account rotation state — scan a rotating batch each cycle instead of all at once
-_ROTATION_INDEX: int = 0
+# ── Rotation state persistence ────────────────────────────────────────────────
+# _ROTATION_INDEX resets to 0 on every restart without persistence, causing the
+# scanner to always hit the same first 18-24 categories (exchanges, wallets,
+# staking…) and never reach the other 40+ categories. We persist to disk so
+# rotation continues exactly where it left off after any deploy/restart.
+_ROTATION_STATE_PATH = os.path.join(os.path.dirname(__file__), "x_rotation_state.json")
+
+
+def _load_rotation_state() -> tuple[int, set]:
+    """Load (rotation_index, recently_scanned_set) from disk."""
+    try:
+        if os.path.exists(_ROTATION_STATE_PATH):
+            d = json.load(open(_ROTATION_STATE_PATH))
+            return d.get("idx", 0), set(d.get("recently_scanned", []))
+    except Exception:
+        pass
+    return 0, set()
+
+
+def _save_rotation_state(idx: int, recently: set) -> None:
+    """Persist rotation index + last 400 scanned account handles."""
+    try:
+        recently_list = list(recently)[-400:]
+        with open(_ROTATION_STATE_PATH, "w") as f:
+            json.dump({"idx": idx, "recently_scanned": recently_list}, f)
+    except Exception:
+        pass
+
+
+_ROTATION_INDEX: int
+_RECENTLY_SCANNED: set
+_ROTATION_INDEX, _RECENTLY_SCANNED = _load_rotation_state()
 
 # Last scan diagnostics — readable from app.py after each fetch_issues() call
 _LAST_SCAN_STATS: dict = {}
@@ -1148,59 +1178,10 @@ def _is_reply_complaint(text: str) -> bool:
       (b) direct help question             (e.g. "how do I unstake?")
       (c) strong standalone crypto phrase  (e.g. "withdrawal stuck 3 days", "tx failed",
           "funds missing", "account suspended", "support not responding")
-      (d) urgency + crypto context         (e.g. "please help, 3 days now no response")
+    Uses module-level _STRONG_REPLY_RE (compiled once, not on every call).
     """
     if _is_complaint(text):
         return True
-
-    # Strong standalone crypto-issue phrases — unambiguous even without a personal pronoun
-    _STRONG_REPLY_RE = re.compile(
-        r"\b("
-        # Stuck/pending with time
-        r"(?:stuck|pending)\s+(?:for\s+)?\d+\s+(?:day|hour|week)|"
-        r"(?:still|been)\s+(?:waiting|pending)\s+(?:for\s+)?\d+|"
-        r"(?:still|been)\s+waiting\s+(?:for\s+)?(?:a\s+)?(?:day|hour|week|month)|"
-        r"(?:\d+\s+(?:day|hour|week)s?\s+(?:and\s+)?(?:still|no|without))|"
-        # Withdrawal / deposit specific
-        r"withdraw(?:al)?\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|working|showing|arrived))|"
-        r"deposit\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|showing|arrived))|"
-        # Funds missing / gone
-        r"funds?\s+(?:gone|missing|lost|stuck|not\s+(?:received|arrived|credited|showing))|"
-        r"money\s+(?:gone|missing|lost|stuck|not\s+(?:received|arrived|credited))|"
-        r"(?:eth|btc|sol|bnb|usdt|usdc|tokens?|coins?)\s+(?:gone|missing|lost|stuck|not\s+received|never\s+arrived)|"
-        # Account issues
-        r"account\s+(?:banned|suspended|frozen|hacked|compromised|locked)|"
-        # Transaction issues
-        r"tx\s+(?:failed|reverted|stuck|dropped|not\s+(?:processed|confirmed))|"
-        r"transaction\s+(?:failed|reverted|stuck|not\s+(?:processed|confirmed|received))|"
-        # Can't do action
-        r"can.?t\s+(?:withdraw|deposit|access|stake|unstake|swap|bridge|login|sign\s*in|connect)|"
-        r"unable\s+to\s+(?:withdraw|deposit|access|stake|unstake|swap|bridge|login|connect)|"
-        r"not\s+able\s+to\s+(?:withdraw|deposit|access|stake|unstake|swap)|"
-        # Bridge / swap
-        r"bridge\s+(?:stuck|failed|not\s+(?:working|processed|arrived))|"
-        r"swap\s+(?:failed|stuck|not\s+(?:working|completed))|"
-        # KYC / verification
-        r"kyc\s+(?:rejected|failed|stuck|not\s+(?:approved|processed|verified))|"
-        r"verification\s+(?:rejected|failed|stuck|not\s+(?:approved|processed))|"
-        # Support not responding
-        r"no\s+response\s+(?:from\s+)?(?:support|team|customer\s+service)|"
-        r"support\s+(?:not\s+responding|ignoring\s+me|never\s+replies?|not\s+helpful)|"
-        r"ticket\s+(?:ignored|no\s+response|still\s+open|unanswered)|"
-        # Order / trade issues
-        r"order\s+(?:failed|rejected|stuck|not\s+(?:filled|executed|processed))|"
-        r"trade\s+(?:failed|not\s+executed|stuck)|"
-        # Exchange specific user complaints
-        r"withdrawal\s+(?:request|fee|limit|issue)|"
-        r"deposit\s+(?:not\s+showing|missing|disappeared)|"
-        r"login\s+(?:failed|not\s+working|issue|problem)|"
-        r"2fa\s+(?:not\s+working|issue|locked)|"
-        r"password\s+reset\s+(?:not\s+working|issue)|"
-        # Common short complaint patterns
-        r"this\s+is\s+(?:a\s+)?(?:scam|fraud|rug\s*pull)"
-        r")\b",
-        re.IGNORECASE,
-    )
     if _STRONG_REPLY_RE.search(text):
         return True
     return False
@@ -1242,6 +1223,67 @@ _SPAM_RE = re.compile(
     r"get back your|recover your|fund.?recover|"
     r"contact.?recovery|recovery.?agent|"
     r"i lost.* and got it back|i was scammed.* and recovered"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# ── STRONG standalone reply patterns ─────────────────────────────────────────
+# Compiled ONCE at module level (was previously compiled inside _is_reply_complaint
+# on every single call — hundreds of recompiles per cycle).
+# These fire even without a personal pronoun because the crypto context itself
+# implies personal stake (the user is replying under an official project post).
+_STRONG_REPLY_RE = re.compile(
+    r"\b("
+    # Stuck/pending with time indicator
+    r"(?:stuck|pending)\s+(?:for\s+)?\d+\s+(?:day|hour|week)|"
+    r"(?:still|been)\s+(?:waiting|pending)\s+(?:for\s+)?\d+|"
+    r"(?:still|been)\s+waiting\s+(?:for\s+)?(?:a\s+)?(?:day|hour|week|month)|"
+    r"(?:\d+\s+(?:day|hour|week)s?\s+(?:and\s+)?(?:still|no|without))|"
+    # Withdrawal / deposit specific
+    r"withdraw(?:al)?\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|working|showing|arrived))|"
+    r"deposit\s+(?:stuck|failed|pending|not\s+(?:received|credited|processed|showing|arrived))|"
+    # Funds missing / gone
+    r"funds?\s+(?:gone|missing|lost|stuck|not\s+(?:received|arrived|credited|showing))|"
+    r"money\s+(?:gone|missing|lost|stuck|not\s+(?:received|arrived|credited))|"
+    r"(?:eth|btc|sol|bnb|usdt|usdc|tokens?|coins?)\s+(?:gone|missing|lost|stuck|not\s+received|never\s+arrived)|"
+    # Account issues
+    r"account\s+(?:banned|suspended|frozen|hacked|compromised|locked)|"
+    # Transaction issues
+    r"tx\s+(?:failed|reverted|stuck|dropped|not\s+(?:processed|confirmed))|"
+    r"transaction\s+(?:failed|reverted|stuck|not\s+(?:processed|confirmed|received))|"
+    # Can't do action — concise forms users actually write
+    r"can.?t\s+(?:withdraw|deposit|access|stake|unstake|swap|bridge|login|sign\s*in|connect)|"
+    r"unable\s+to\s+(?:withdraw|deposit|access|stake|unstake|swap|bridge|login|connect)|"
+    r"not\s+able\s+to\s+(?:withdraw|deposit|access|stake|unstake|swap)|"
+    # Bridge / swap
+    r"bridge\s+(?:stuck|failed|not\s+(?:working|processed|arrived))|"
+    r"swap\s+(?:failed|stuck|not\s+(?:working|completed))|"
+    # KYC / verification
+    r"kyc\s+(?:rejected|failed|stuck|not\s+(?:approved|processed|verified))|"
+    r"verification\s+(?:rejected|failed|stuck|not\s+(?:approved|processed))|"
+    # Support not responding
+    r"no\s+response\s+(?:from\s+)?(?:support|team|customer\s+service)|"
+    r"support\s+(?:not\s+responding|ignoring\s+me|never\s+replies?|not\s+helpful)|"
+    r"ticket\s+(?:ignored|no\s+response|still\s+open|unanswered)|"
+    # Order / trade issues
+    r"order\s+(?:failed|rejected|stuck|not\s+(?:filled|executed|processed))|"
+    r"trade\s+(?:failed|not\s+executed|stuck)|"
+    # Exchange-specific
+    r"withdrawal\s+(?:request|fee|limit|issue)|"
+    r"deposit\s+(?:not\s+showing|missing|disappeared)|"
+    r"login\s+(?:failed|not\s+working|issue|problem)|"
+    r"2fa\s+(?:not\s+working|issue|locked)|"
+    r"password\s+reset\s+(?:not\s+working|issue)|"
+    # Short complaint markers
+    r"this\s+is\s+(?:a\s+)?(?:scam|fraud|rug\s*pull)|"
+    # Additional patterns users commonly write
+    r"lost\s+(?:all\s+)?(?:my\s+)?(?:funds?|money|tokens?|coins?|eth|btc|sol|bnb|usdt)|"
+    r"never\s+(?:received|credited|arrived|showed\s+up)|"
+    r"(?:hours?|days?)\s+(?:later|and)\s+(?:still|nothing|no\s+response)|"
+    r"(?:sent|transferred)\s+(?:but|and)\s+(?:never|not)\s+(?:received|arrived|credited)|"
+    r"where\s+(?:are|is)\s+my\s+(?:funds?|money|tokens?|coins?|withdrawal|deposit)|"
+    r"getting\s+(?:scammed|rugged|ignored)|"
+    r"(?:no|zero)\s+(?:support|response|help)\s+from"
     r")\b",
     re.IGNORECASE,
 )
@@ -1345,41 +1387,50 @@ def fetch_issues(
     """
     seen_ids = seen_ids or set()
 
-    global _ROTATION_INDEX
+    global _ROTATION_INDEX, _RECENTLY_SCANNED
 
     auth, ct0 = _load_creds()
     if not auth or not ct0:
         logging.warning("x_issues_monitor: no credentials")
         return []
 
-    # Refresh CoinGecko discovery (no-op if < 4 hours since last refresh)
+    # Refresh CoinGecko discovery (no-op if < refresh interval)
     _refresh_dynamic_accounts()
 
     session  = _make_session(auth, ct0)
     cache    = _load_user_id_cache()
-    # 24-hour cutoff: fetch tweets from past 24h so we catch accounts that tweet
-    # infrequently. Dedup via seen_ids prevents re-sending old complaints.
-    cutoff   = time.time() - 24 * 3600
+    # 36-hour cutoff so we catch complaints posted on slowly-replied support threads.
+    # Dedup via seen_ids prevents re-sending anything already sent.
+    cutoff   = time.time() - 36 * 3600
 
     # ── Step 1: Build account pool + rotate batch ─────────────────────────
-    # Two-tier approach:
-    #   Tier 1 (always): ~20 highest-volume accounts guaranteed every cycle
-    #   Tier 2 (rotating): category-balanced, 1 per category from the remaining 65+ categories
-    # This ensures Binance/Coinbase/MetaMask (hundreds of complaints/day) are always
-    # scanned while still cycling through every other project category for variety.
+    # DESIGN:
+    #   Tier 1 (ALWAYS): 16 highest-signal accounts scanned every cycle
+    #     — BinanceHelpDesk, Coinbase, MetaMask etc. have hundreds of complaints/day
+    #     — Their IDs are hardcoded in _KNOWN_USER_IDS so no UserByScreenName calls
+    #   Tier 2 (ROTATING): 24 accounts, one randomly chosen per category
+    #     — _ROTATION_INDEX persists to disk → never resets on restart
+    #     — random.choice() per category gives intra-category variety
+    #     — recently_scanned set avoids repeating same account 2 cycles in a row
+    #   Total: ~40 accounts per cycle, all within UserTweets rate limit (~300/15min)
     import random as _rand
 
-    # High-volume accounts with daily complaints — always scanned every cycle.
-    # Keep this list SHORT (≤12) so we stay well under the UserTweets rate limit.
+    # Priority accounts — guaranteed every cycle, IDs hardcoded in x_scraper.py
     _PRIORITY_ALWAYS = [
+        # Exchange support — highest complaint volume
         "BinanceHelpDesk", "CoinbaseSupport", "KrakenSupport", "Bybit_CS",
-        "MetaMask_Support", "TrustWalletApp", "LedgerSupport",
-        "AaveAave", "JupiterExchange", "arbitrum", "base", "circle",
+        "OKXSupport", "HTXGlobal_Help",
+        # Wallet support
+        "MetaMask_Support", "TrustWalletApp", "LedgerSupport", "phantom",
+        # DeFi + L2 flagships
+        "AaveAave", "JupiterExchange", "arbitrum", "base",
+        # Security monitors (live exploit/hack feed)
+        "PeckShieldAlert", "BlockSecTeam",
     ]
-    # Rotating slots: pick 18 accounts from ALL 65 categories this cycle,
-    # cycling which account and which subset of categories each time.
-    # 12 priority + 18 rotating = 30 total → stays well under rate limit.
-    _ROTATE_SLOTS = 18
+    # Rotating slots: pick 24 accounts from ALL categories this cycle.
+    # 16 priority + 24 rotating = 40 total. With 15-min interval each account
+    # set stays safely under Twitter's ~300 UserTweets calls per 15-min window.
+    _ROTATE_SLOTS = 24
 
     dynamic_new = [h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set]
     bg_new      = [h for h in _BG_ENRICHED     if h.lower() not in _seen_set]
@@ -1388,8 +1439,10 @@ def fetch_issues(
     batch_set: set[str] = {a.lower() for a in _PRIORITY_ALWAYS}
     batch: list[str] = list(_PRIORITY_ALWAYS)
 
-    # Rotate through all categories evenly. Each cycle we advance by _ROTATE_SLOTS
-    # so every category appears roughly once every (65 / 18) ≈ 4 cycles.
+    # Rotate through all categories. Each cycle we advance the starting index by
+    # _ROTATE_SLOTS so every category appears roughly once every ≈3 cycles (45 min).
+    # Within each category we use random.choice() to pick a different account each
+    # time, preferring accounts NOT recently scanned for maximum variety.
     cat_list = list(_ACCOUNTS.items())
     num_cats = len(cat_list)
     added = 0
@@ -1400,20 +1453,30 @@ def fetch_issues(
         cat, cat_accounts = cat_list[cat_idx]
         if not cat_accounts:
             continue
-        pick_idx = (_ROTATION_INDEX) % len(cat_accounts)
-        pick = cat_accounts[pick_idx]
+        # Prefer accounts not scanned in the last 2 cycles (~30 min)
+        fresh = [a for a in cat_accounts if a.lower() not in _RECENTLY_SCANNED]
+        candidates = fresh if fresh else cat_accounts
+        pick = _rand.choice(candidates)
         if pick.lower() not in batch_set:
             batch_set.add(pick.lower())
             batch.append(pick)
             added += 1
 
-    # Also fold in dynamic/enriched accounts (new ones discovered at runtime)
-    for h in (dynamic_new + bg_new)[:4]:   # cap extra to keep total ≤ 35
+    # Fold in CoinGecko-discovered accounts (new projects found automatically)
+    for h in (dynamic_new + bg_new)[:6]:
         if h.lower() not in batch_set:
             batch_set.add(h.lower())
             batch.append(h)
 
+    # Advance rotation and persist so restarts don't repeat same categories
     _ROTATION_INDEX += 1
+    # Track what was just scanned so next cycle picks different accounts
+    _RECENTLY_SCANNED = (_RECENTLY_SCANNED | {a.lower() for a in batch})
+    # Keep only last 2 cycles worth to avoid blocking too many accounts
+    if len(_RECENTLY_SCANNED) > len(batch) * 2 + 50:
+        _RECENTLY_SCANNED = set(list(_RECENTLY_SCANNED)[-len(batch)*2:])
+    _save_rotation_state(_ROTATION_INDEX, _RECENTLY_SCANNED)
+
     _rand.shuffle(batch)
     all_accounts_to_scan = batch
     pool_size = len(_ALL_ACCOUNTS) + len(dynamic_new) + len(bg_new)
@@ -1421,7 +1484,7 @@ def fetch_issues(
     logging.info(
         f"x_issues_monitor: scanning {len(all_accounts_to_scan)} accounts "
         f"(pool={pool_size}, dynamic={len(dynamic_new)}, "
-        f"rotation_idx={_ROTATION_INDEX})"
+        f"rotation_idx={_ROTATION_INDEX}, fresh_candidates={len(batch) - len(_PRIORITY_ALWAYS)})"
     )
 
     official_tweets: list[dict] = []
@@ -1476,7 +1539,7 @@ def fetch_issues(
         src_user = src.get("user", "")
         if not src_id:
             continue
-        replies = fetch_tweet_replies(src_id, session, max_age_hours=24)
+        replies = fetch_tweet_replies(src_id, session, max_age_hours=36)
         total_raw_replies += len(replies)
         for r in replies:
             rid = r.get("id", "")
@@ -1517,8 +1580,8 @@ def fetch_issues(
     #                     so every category gets a turn even across the same cycle
     _per_source_count: dict[str, int] = {}
     _per_cat_count:    dict[str, int] = {}
-    _PER_SOURCE_CAP = 1   # 1 complaint per official account per cycle
-    _PER_CAT_CAP    = 1   # 1 complaint per category per cycle
+    _PER_SOURCE_CAP = 2   # up to 2 complaints per official account per cycle
+    _PER_CAT_CAP    = 2   # up to 2 complaints per category per cycle (variety enforced across 65 categories)
 
     for t in user_reply_tweets:
         text = t.get("text", "")
