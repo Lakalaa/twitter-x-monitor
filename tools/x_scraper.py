@@ -60,6 +60,27 @@ _TWEET_FEATURES = {
 _CONFIG_FILE = os.path.join(os.path.dirname(__file__), "targets.json")
 _USER_ID_CACHE_FILE = os.path.join(os.path.dirname(__file__), "x_user_id_cache.json")
 
+# ── Hardcoded numeric user IDs for priority accounts ─────────────────────────
+# These never change once assigned. Having them avoids UserByScreenName API
+# calls for the most critical accounts, eliminating 429 failures on fresh deploys.
+# Populated from /api/test-twitter?bulk=1 on 2026-07-28.
+_KNOWN_USER_IDS: dict[str, str] = {
+    "binancehelpdesk":       "1026411197669625858",
+    "coinbasesupport":       "2555176531",
+    "krakensupport":         "2771348308",
+    "trustwalletapp":        "1426108217025867781",
+    "aaveaave":              "1719825249397604352",
+    "jupiterexchange":       "1446489618208067586",
+    "arbitrum":              "1332033418088099843",
+    "base":                  "1628067904083181570",
+    "circle":                "2151686839",
+    "uniswap":               "984188226826010624",
+    "phantom":               "1379053041995890695",
+    "hyperliquidx":          "1527020295059648513",
+    "magiceden":             "1433121559057559555",
+    "peckshieldalert":       "1128606567354359808",
+}
+
 # ── Per-account rate-limit cooldown tracking ─────────────────────────────────
 # When we get 429 on an account, skip it for 16 minutes so we don't waste
 # every cycle hammering blocked accounts. Resets naturally as windows expire.
@@ -156,10 +177,15 @@ def _find_tweets(obj, found=None):
 
 
 def get_user_id(screen_name: str, session, cache: dict) -> Optional[str]:
-    """Resolve @screen_name → numeric user ID, using cache."""
+    """Resolve @screen_name → numeric user ID, using cache then hardcoded IDs then API."""
     key = screen_name.lower()
     if key in cache:
         return cache[key]
+    # Check hardcoded known IDs — zero API calls for priority accounts
+    if key in _KNOWN_USER_IDS:
+        uid = _KNOWN_USER_IDS[key]
+        cache[key] = uid
+        return uid
     if _is_rl(screen_name):
         return None  # still in cooldown, skip
     url = f"https://x.com/i/api/graphql/{_QID_USER_BY_SCREEN}/UserByScreenName"
