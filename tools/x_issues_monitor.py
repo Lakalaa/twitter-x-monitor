@@ -2104,29 +2104,45 @@ def fetch_issues(
     _search_status = "disabled"
     try:
         from twitter_search import search_all as _search_all
+        import threading as _sth2, queue as _q2
 
         # Rotate 40 queries per cycle through the full 300+ pool
-        # Full pool covered every ~8 cycles (~2 hrs at 15-min intervals)
         q_offset = (_ROTATION_INDEX - 1) * 40
         selected_queries = [
             _SEARCH_QUERIES[(q_offset + i) % len(_SEARCH_QUERIES)]
             for i in range(40)
         ]
 
-        raw, _search_status = _search_all(
-            queries=selected_queries,
-            auth=auth,
-            ct0=ct0,
-            count=20,
-            parallel=8,
-        )
-        for _t in raw:
-            tid = _t.get("id", "")
-            if tid and tid not in seen_ids:
-                _t["source_cat"]   = "search"
-                _t["search_query"] = _t.get("search_query", "")
-                search_complaints.append(_t)
-                seen_ids.add(tid)
+        # Run search_all in a separate thread with a hard 90s timeout
+        # (prevents asyncio event-loop conflicts from blocking the entire scan)
+        _result_q: "_q2.Queue[tuple]" = _q2.Queue()
+
+        def _do_search():
+            try:
+                raw, status = _search_all(
+                    queries=selected_queries, auth=auth, ct0=ct0,
+                    count=20, parallel=8,
+                )
+                _result_q.put((raw, status))
+            except Exception as _e:
+                _result_q.put(([], f"error: {str(_e)[:60]}"))
+
+        _st = _sth2.Thread(target=_do_search, daemon=True)
+        _st.start()
+        _st.join(timeout=90)
+
+        if _st.is_alive():
+            _search_status = "timeout (>90s)"
+            logging.warning("x_issues_monitor: step0 timed out after 90s")
+        else:
+            raw, _search_status = _result_q.get_nowait() if not _result_q.empty() else ([], "no result")
+            for _t in raw:
+                tid = _t.get("id", "")
+                if tid and tid not in seen_ids:
+                    _t["source_cat"]   = "search"
+                    _t["search_query"] = _t.get("search_query", "")
+                    search_complaints.append(_t)
+                    seen_ids.add(tid)
 
         logging.info(
             f"x_issues_monitor: step0 — {len(search_complaints)} unique search tweets "

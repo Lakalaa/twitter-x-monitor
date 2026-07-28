@@ -55,6 +55,35 @@ _twscrape_lock   = threading.Lock()
 _twscrape_ready  = False   # True once account successfully added
 
 
+def _run_async_in_thread(coro, timeout: float = 60.0):
+    """
+    Run an async coroutine in a brand-new thread with its own event loop.
+    Avoids conflicts with any existing event loop (e.g. python-telegram-bot).
+    Returns the result or raises TimeoutError / the original exception.
+    """
+    result_box: list = []
+    exc_box:    list = []
+
+    def _worker():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result_box.append(loop.run_until_complete(coro))
+        except Exception as e:
+            exc_box.append(e)
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError(f"async coroutine timed out after {timeout}s")
+    if exc_box:
+        raise exc_box[0]
+    return result_box[0] if result_box else None
+
+
 def _get_twscrape_client(auth: str, ct0: str):
     """Return a ready twscrape API client (singleton, lazy-init)."""
     global _twscrape_client, _twscrape_ready
@@ -78,7 +107,7 @@ def _get_twscrape_client(auth: str, ct0: str):
                     cookies=f"auth_token={auth}; ct0={ct0}",
                 )
             try:
-                asyncio.run(_add())
+                _run_async_in_thread(_add(), timeout=30.0)
                 _twscrape_ready = True
                 log.info("twitter_search: twscrape account added")
             except Exception as e:
@@ -115,12 +144,16 @@ def _twscrape_search(queries: list[str], auth: str, ct0: str, count: int = 20) -
                         break
             except Exception as e:
                 log.warning(f"twitter_search: twscrape query error ({q[:40]}): {e}")
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(0.5)
         return results
 
     try:
-        tweets = asyncio.run(_run())
-        return tweets, f"twscrape {len(tweets)} tweets"
+        # Use thread-based runner to avoid conflicts with existing event loops
+        tweets = _run_async_in_thread(_run(), timeout=min(len(queries) * 8.0, 120.0))
+        return tweets or [], f"twscrape {len(tweets or [])} tweets"
+    except TimeoutError:
+        log.warning("twitter_search: twscrape timed out")
+        return [], "twscrape timeout"
     except Exception as e:
         log.warning(f"twitter_search: twscrape run error: {e}")
         return [], f"twscrape error: {str(e)[:50]}"
