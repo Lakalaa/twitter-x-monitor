@@ -19,9 +19,12 @@ BEARER = (
     "%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 )
 
-_QID_USER_BY_SCREEN   = "2qvSHpkWTMS9i0zJAwDNiA"
-_QID_USER_TWEETS      = "RIylB10EGWyBSs4ZXpQjCw"
-_QID_TWEET_DETAIL     = "Lq1caG5YPcdhpTdS2ZRx7Q"   # refreshed Jul-2026 from main bundle
+# QIDs extracted from main.933c177a.js on 2026-07-28 via residential proxy bundle fetch.
+# When any endpoint returns 404, call _auto_refresh_qids() to re-extract from the live bundle.
+_QID_USER_BY_SCREEN   = "Gb-d6r0vxPOADdG62OEBpQ"
+_QID_USER_TWEETS      = "eoJ5zbv51Z_KVl81v9PmLQ"
+_QID_TWEET_DETAIL     = "559hs_YZNV4IgA3Z6zIIuw"
+_QID_SEARCH_TIMELINE  = "BGd0T_j7oVwlW5U79tO_0A"   # requires residential proxy (blocked from GCP IPs)
 
 _USER_FEATURES = {
     "hidden_profile_subscriptions_enabled": True,
@@ -323,6 +326,125 @@ def fetch_tweet_replies(tweet_id: str, session, max_age_hours: int = 48) -> list
     except Exception as e:
         import logging
         logging.warning(f"x_scraper: fetch_tweet_replies({tweet_id}) error: {e}")
+        return []
+
+
+# ── SearchTimeline — global keyword search via residential proxy ──────────────
+# SearchTimeline is blocked from GCP/datacenter IPs but works via Webshare residential proxies.
+# This allows searching ALL of Twitter for specific complaint keywords, not just monitored
+# accounts' reply threads. Dramatically expands worldwide coverage.
+_SEARCH_FEATURES = {
+    "rweb_video_screen_enabled": False,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "articles_preview_enabled": True,
+    "view_counts_everywhere_api_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "longform_notetweets_inline_media_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+}
+
+
+def _refresh_qids_from_bundle(proxy_session=None) -> dict:
+    """
+    Fetch Twitter's main JS bundle and re-extract all GraphQL queryIds.
+    Called automatically when any endpoint returns 404 (rotated QIDs).
+    Uses proxy session so the bundle fetch comes from a residential IP.
+    """
+    import re as _re, logging as _log
+    try:
+        sess = proxy_session
+        if sess is None:
+            if _HAS_CFFI:
+                sess = _cffi.Session(impersonate="chrome120")
+            else:
+                sess = _req.Session()
+            sess.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        # Fetch home page to find bundle URL
+        r = sess.get("https://x.com/explore", timeout=20, headers={"Accept": "text/html,application/xhtml+xml"})
+        html = r.text
+        bundle_urls = _re.findall(r'https://abs\.twimg\.com/responsive-web/client-web/main\.[^"]+\.js', html)
+        if not bundle_urls:
+            _log.warning("x_scraper: QID refresh — no bundle URL in Twitter home page")
+            return {}
+        rb = sess.get(bundle_urls[0], timeout=40)
+        js = rb.text
+        ops: dict[str, str] = {}
+        for m in _re.finditer(r'queryId:"([^"]{10,})",operationName:"([^"]+)"', js):
+            ops[m.group(2)] = m.group(1)
+        _log.info(f"x_scraper: QID refresh — extracted {len(ops)} ops from {bundle_urls[0][-40:]}")
+        return ops
+    except Exception as exc:
+        import logging
+        logging.warning(f"x_scraper: QID bundle refresh error: {exc}")
+        return {}
+
+
+def _auto_refresh_qids(proxy_session=None) -> None:
+    """Re-extract all QIDs from the live bundle when 404s indicate they've rotated."""
+    global _QID_USER_BY_SCREEN, _QID_USER_TWEETS, _QID_TWEET_DETAIL, _QID_SEARCH_TIMELINE
+    ops = _refresh_qids_from_bundle(proxy_session)
+    if ops.get("SearchTimeline"):  _QID_SEARCH_TIMELINE = ops["SearchTimeline"]
+    if ops.get("UserTweets"):      _QID_USER_TWEETS     = ops["UserTweets"]
+    if ops.get("UserByScreenName"):_QID_USER_BY_SCREEN  = ops["UserByScreenName"]
+    if ops.get("TweetDetail"):     _QID_TWEET_DETAIL    = ops["TweetDetail"]
+
+
+def search_keyword_complaints(
+    query: str,
+    proxy_session,
+    count: int = 20,
+) -> list:
+    """
+    Search ALL of Twitter for a complaint keyword using SearchTimeline GraphQL.
+    Requires a residential proxy session (proxy_pool.make_proxied_session) —
+    this endpoint is blocked from GCP/datacenter IPs.
+
+    Returns tweet dicts in the same format as fetch_user_tweets.
+    Returns [] on 429 or if proxy_session is None.
+    Auto-refreshes QIDs on 404 (rotated bundle).
+
+    Example query: 'withdrawal stuck crypto -is:retweet lang:en'
+    """
+    import logging
+    if proxy_session is None:
+        return []
+    url = f"https://x.com/i/api/graphql/{_QID_SEARCH_TIMELINE}/SearchTimeline"
+    try:
+        r = proxy_session.get(url, params={
+            "variables": json.dumps({
+                "rawQuery":    query,
+                "count":       count,
+                "querySource": "typed_query",
+                "product":     "Latest",
+            }, separators=(",", ":")),
+            "features": json.dumps(_SEARCH_FEATURES, separators=(",", ":")),
+        }, timeout=20)
+        if r.status_code == 404:
+            logging.warning("x_scraper: SearchTimeline 404 — QIDs rotated, refreshing from bundle")
+            _auto_refresh_qids(proxy_session)
+            return []
+        if r.status_code == 429:
+            logging.warning(f"x_scraper: SearchTimeline 429 — rate limited for: {query[:50]}")
+            return []
+        if r.status_code != 200:
+            logging.warning(f"x_scraper: SearchTimeline HTTP {r.status_code} for: {query[:50]}")
+            return []
+        tweets = _find_tweets(r.json())
+        result = []
+        for t in tweets:
+            text = t.get("text", "")
+            if not text or text.startswith("RT "):
+                continue
+            if t.get("id") and t.get("user"):
+                t["url"] = f"https://x.com/{t['user']}/status/{t['id']}"
+            result.append(t)
+        return result
+    except Exception as exc:
+        logging.warning(f"x_scraper: search_keyword_complaints error ({query[:40]}): {exc}")
         return []
 
 

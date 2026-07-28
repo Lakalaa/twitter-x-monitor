@@ -786,6 +786,192 @@ _ACCOUNTS: dict[str, list[str]] = {
         "DeFiChain", "NuCypher", "tezos",
         "Kadena_io", "DeSo_Protocol",
     ],
+
+    # ─────────────────────────────────────────────────────────────────────
+    # REGIONAL ACCOUNTS — currently underserved crypto communities
+    # These markets have huge complaint volumes that aren't caught by the
+    # English-focused static list above.
+    # ─────────────────────────────────────────────────────────────────────
+
+    # ── India — one of the largest retail crypto user bases globally ──────
+    "india": [
+        "WazirXIndia", "CoinDCX", "ZebpayIndia", "CoinSwitchKuber",
+        "unocoin", "mudrexapp", "GoSats_", "KoinX_in",
+        "buyucoin", "BitBNS", "PeepalCo", "giottus_io",
+        "CoinDCXSupport", "WazirXSupport",
+    ],
+
+    # ── Latin America — explosive crypto adoption, many exchange issues ───
+    "latam": [
+        "Bitso", "mercadobitcoin", "ripiocity", "LemonCashApp",
+        "CriptoYa", "australbtc", "SatoshiTango", "belo_app",
+        "CryptoBandidos", "BinanceLATAM", "cryptomkt",
+        "masonfinancial_", "Blain_Crypto", "OKXLatam",
+    ],
+
+    # ── Africa — fastest growing crypto market, high complaint volume ─────
+    "africa": [
+        "YellowCardFin", "Luno", "Quidax", "chipper_cash",
+        "bitnob_io", "bitmama_", "paxful", "Remitano",
+        "CashRamp_io", "KotaniPay", "fuze_africa",
+        "BinanceAfrica", "KuCoinAfrica", "leatherback_io",
+    ],
+
+    # ── Korea — world's highest per-capita crypto trading volume ──────────
+    "korea": [
+        "upbit_official", "BithumbCS", "KorbitOfficial",
+        "CoinoneOfficial", "gopax_kor", "nfino_official",
+        "BithumbGlobal", "upbitofficialcs",
+    ],
+
+    # ── Southeast Asia — Indonesia, Thailand, Philippines, Singapore ──────
+    "sea": [
+        "IndodaxCom", "Bitkub_official", "coinhako", "tokocrypto",
+        "Tokenize_asia", "CoinPH_io", "BitazoCom",
+        "BinanceTH", "KuCoinSEA", "GeminiSEA",
+        "bybit_sg", "OKXSea",
+    ],
+
+    # ── Turkey — very large and active crypto market ──────────────────────
+    "turkey": [
+        "BtcTurk", "Paribu_com", "Bitexen_com", "icryptex",
+        "BinanceTR", "KoinfineTR", "bitcashin_io",
+        "OKXTurkey", "KuCoinTR",
+    ],
+
+    # ── CIS / Eastern Europe — Russia, Ukraine, Kazakhstan ───────────────
+    "cis_eeurope": [
+        "ExmoOfficial", "WhiteBIT", "kunaexchange",
+        "BittrueOfficial", "CEX_io", "CryptoCom_CIS",
+        "CoinPaymentsUA", "Binance_ua",
+    ],
+
+    # ── Middle East — UAE, Saudi, Kuwait, Bahrain ─────────────────────────
+    "middle_east": [
+        "Rain_HQ", "BitOasis_com", "CoinMENA_io", "BitcoinMENA",
+        "Pyypl", "OKXMiddleEast", "BinanceMENA",
+        "CryptoComMENA",
+    ],
+
+    # ── More global CEX support — users mention these everywhere ──────────
+    "global_cex2": [
+        "BinanceCS", "BybitSupport", "OKXSupport",
+        "BitgetOfficial", "CoinExSupport", "XT_Official",
+        "DigiFinex_", "LBank_Official", "BingXOfficial",
+        "BiconomyExchange", "P2PBinance", "BinanceFiat",
+    ],
+
+    # ── More DeFi lending / yield — where users get stuck ─────────────────
+    "lending2": [
+        "AaveAave", "compoundfinance", "EulerFinance",
+        "SiloFinance", "FluidProtocol", "ionicmoney",
+        "gearboxprotocol", "term_finance", "AjnaProtocol",
+        "exaprotocol", "TarotFinance", "curvance_fi",
+        "zeroland_fi", "loopring_org",
+    ],
+
+    # ── Cross-chain / intent protocols — new tech, many user errors ───────
+    "intent_xchain": [
+        "CowProtocol", "UniswapX", "1inchNetwork",
+        "openocean_", "deBridgeFinance", "SocketDotTech",
+        "LifiProtocol", "TransferTo_io", "OdosProtocol",
+        "SynapseProtocol", "RelayProtocol",
+    ],
+
+    # ── NFT gaming / web3 games with active complaint communities ─────────
+    "nft_gaming2": [
+        "HeroesOfMavia", "ParallelNFT", "PixelmonNFT",
+        "BigTimeStudios", "SuperverseNFT", "BeamOnXyz",
+        "MythicalGames", "WildLifeStudios", "EVIOGame",
+        "UltimaOnline_", "MonkeyLeagueio", "CrabadaGame",
+    ],
+
+    # ── Stablecoins / issuers — depegs cause massive complaint spikes ─────
+    "stablecoins": [
+        "Tether_to", "circlepay", "PaxosGlobal",
+        "TrueUSD", "FraxFinance", "MakerDAO",
+        "curves", "ColonyNetwork", "crvUSDFi",
+        "LUSDFi", "EthenaLabs", "USDCOfficial",
+    ],
+
+    # ── Solana ecosystem deeper — more projects, more users ───────────────
+    "solana3": [
+        "SolanaFM", "solscan_io", "SolanaFloor",
+        "heliuslabs", "triton_one", "jito_labs",
+        "hellomoon_io", "SolanaNews_", "solscanio",
+        "MEV_sol", "Solana_Daily", "SolfareOfficial",
+    ],
+
+    # ── Base / OP / Arb ecosystem — growing fast ──────────────────────────
+    "base_op_arb3": [
+        "basescan", "arbiscan", "OptimismScan",
+        "AerodromeFinance", "VelodromeFi", "camelotdex",
+        "GrandBaseXYZ", "BaseSwap_fi", "RocketPoolETH",
+        "ShadowOnBase", "IteraDAO_",
+    ],
+
+    # ── NFT collectibles with high trading and complaint volume ───────────
+    "nft3": [
+        "lilpudgys", "BoredApeYC", "pudgypenguins",
+        "AzukiOfficial", "milady", "MadLads_",
+        "FrogsTribe", "tensorians_", "DeGodsNFT",
+        "y00tsNFT", "okay_bears", "SMB_Gen3",
+    ],
+
+    # ── HyperLiquid — fast growing, many liquidation complaints ──────────
+    "hyperliquid": [
+        "HyperliquidX", "HL_Liquidations", "hlperps_",
+        "HyperLiquidBot", "SentioXYZ",
+    ],
+
+    # ── More on/off ramps — failed card charges, KYC stuck ───────────────
+    "onramps2": [
+        "MoonPay", "Transak", "RampNetwork",
+        "AlchemyPay", "ChangeNOW_io", "SimpleSwap_io",
+        "FixedFloat", "StealthEX_io", "SwapZone_io",
+        "LetsExchange_", "exolixcom",
+    ],
+
+    # ── NFT finance — loans, fractionalization ────────────────────────────
+    "nft_finance": [
+        "NFTfi", "benddaodoteth", "X2Y2Financial",
+        "JPEG_d", "nftperp", "floordao_xyz",
+        "GoblinSax_", "zhartaTechFi", "unlockd_finance",
+        "paraspace_xyz", "Cyan_Finance",
+    ],
+
+    # ── More DeFi protocols ───────────────────────────────────────────────
+    "defi2": [
+        "TempleDAO_", "OlympusDAO", "AlchemixFi",
+        "reflexerfinance", "liquity_eth", "inverse_finance",
+        "ribbonfinance", "STRIPSFinance", "volmexfinance",
+        "unshethXYZ", "DineroXYZ", "pirexeth",
+        "YieldNestFi", "Napier_Finance",
+    ],
+
+    # ── Liquid restaking (all) ────────────────────────────────────────────
+    "restaking2": [
+        "puffer_finance", "RenzoProtocol", "swell_l2",
+        "YieldNestFi", "InceptionLRT", "bedrock_defi",
+        "StaderLabs", "ClayStack_", "bifrost_finance",
+        "ether_fi", "KelpDAO", "stakestone_io",
+        "symbiotic_fi", "mellow_defi",
+    ],
+
+    # ── Prediction markets ────────────────────────────────────────────────
+    "prediction": [
+        "polymarket", "Augur", "GnosisDAO",
+        "azuro_protocol", "overtime_markets",
+        "sx_network", "BetSwirl", "Ostium_Labs",
+    ],
+
+    # ── Decentralized storage / data ──────────────────────────────────────
+    "infra_data": [
+        "Filecoin", "arweave", "StorjProject",
+        "ThreeFoldio", "sia_hq", "hoprnet",
+        "DeFiChain", "NuCypher", "tezos",
+        "Kadena_io", "DeSo_Protocol",
+    ],
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1045,6 +1231,71 @@ def _run_bg_enrichment() -> None:
 _BG_ENRICHED = _load_bg_cache()
 _run_bg_enrichment()
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DeFiLlama protocol enrichment — 7,782 protocols, ONE API call, no key needed
+# Fetches all DeFiLlama protocols and extracts Twitter handles for any protocol
+# NOT already in our static list. Adds ~6,800 additional project accounts and
+# refreshes every 12 hours automatically. Free, no rate limits.
+# ─────────────────────────────────────────────────────────────────────────────
+_DEFILLAMA_CACHE_PATH = os.path.join("outputs", "cache", "defillama_handles.json")
+_DEFILLAMA_ACCOUNTS: list[str] = []
+_DEFILLAMA_LAST_REFRESH: float = 0.0
+_DEFILLAMA_REFRESH_INTERVAL: float = 12 * 3600   # every 12 hours
+
+
+def _load_defillama_cache() -> list[str]:
+    try:
+        if os.path.exists(_DEFILLAMA_CACHE_PATH):
+            with open(_DEFILLAMA_CACHE_PATH) as _f:
+                return json.load(_f)
+    except Exception:
+        pass
+    return []
+
+
+def _save_defillama_cache(handles: list[str]) -> None:
+    os.makedirs(os.path.dirname(_DEFILLAMA_CACHE_PATH), exist_ok=True)
+    with open(_DEFILLAMA_CACHE_PATH, "w") as _f:
+        json.dump(handles, _f)
+
+
+def _refresh_defillama_accounts() -> None:
+    """
+    Fetch all DeFiLlama protocols (~8,000) and extract Twitter handles not already
+    in our static _ALL_ACCOUNTS list. One API call, no auth, no rate limit.
+    Results become additional rotation accounts in fetch_issues().
+    Persists to disk so Render restarts don't re-fetch immediately.
+    """
+    global _DEFILLAMA_ACCOUNTS, _DEFILLAMA_LAST_REFRESH
+    now = time.time()
+    if now - _DEFILLAMA_LAST_REFRESH < _DEFILLAMA_REFRESH_INTERVAL:
+        return
+    try:
+        req = urllib.request.Request(
+            "https://api.llama.fi/protocols",
+            headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as _r:
+            data = json.loads(_r.read())
+        existing = {a.lower() for a in _ALL_ACCOUNTS}
+        handles: list[str] = []
+        seen_new: set[str] = set()
+        for p in data:
+            tw = (p.get("twitter") or "").strip().lstrip("@").strip()
+            if tw and 3 <= len(tw) <= 50 and tw.lower() not in existing and tw.lower() not in seen_new:
+                handles.append(tw)
+                seen_new.add(tw.lower())
+        _DEFILLAMA_ACCOUNTS = handles
+        _DEFILLAMA_LAST_REFRESH = now
+        _save_defillama_cache(handles)
+        logging.info(f"x_issues_monitor: DeFiLlama — {len(handles)} additional protocol handles discovered")
+    except Exception as e:
+        logging.warning(f"x_issues_monitor: DeFiLlama refresh error: {e}")
+
+
+# Load DeFiLlama cache from disk on startup (instant — no API call needed)
+_DEFILLAMA_ACCOUNTS = _load_defillama_cache()
+
 # Flat deduped list
 _ALL_ACCOUNTS: list[str] = []
 _seen_set: set[str] = set()
@@ -1155,13 +1406,16 @@ _HELP_QUESTION_RE = re.compile(
 def _is_complaint(text: str) -> bool:
     """
     Returns True if the tweet sounds like a real personal complaint or help request.
-    Requires EITHER:
+    Requires ONE OF:
       (a) personal pronoun + a problem word — "my withdrawal is stuck"
       (b) a direct help question about their own situation — "how do I unstake?"
+      (c) a multilingual complaint phrase (Spanish/PT/TR/ID/RU/KO/ZH/JA/AR)
     """
     if _HAS_PERSONAL_RE.search(text) and _HAS_PROBLEM_RE.search(text):
         return True
     if _HELP_QUESTION_RE.search(text):
+        return True
+    if _MULTILINGUAL_COMPLAINT_RE.search(text):
         return True
     return False
 
@@ -1183,6 +1437,8 @@ def _is_reply_complaint(text: str) -> bool:
     if _is_complaint(text):
         return True
     if _STRONG_REPLY_RE.search(text):
+        return True
+    if _MULTILINGUAL_COMPLAINT_RE.search(text):
         return True
     return False
 
@@ -1288,6 +1544,77 @@ _STRONG_REPLY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── Multilingual complaint patterns ──────────────────────────────────────────
+# Covers the major non-English crypto user bases: Spanish, Portuguese, Turkish,
+# Indonesian, Russian, Korean, Chinese, Japanese, Arabic.
+# These are compiled once at module level for performance.
+_MULTILINGUAL_COMPLAINT_RE = re.compile(
+    r"("
+    # ── Spanish (massive LatAm/Spain crypto community) ────────────────────
+    r"no\s+puedo\s+retirar|retiro\s+(?:bloqueado|fallido|pendiente|atascado)|"
+    r"fondos?\s+(?:bloqueados?|congelados?|perdidos?|desaparecidos?)|"
+    r"transacc?i[oó]n\s+(?:fallida|no\s+procesada|rechazada|fallida)|"
+    r"cuenta\s+(?:suspendida|bloqueada|congelada|baneada)|"
+    r"no\s+recibi[oó]\s+(?:mis?\s+)?(?:fondos?|tokens?|monedas?)|"
+    r"deposito\s+no\s+lleg[oó]|saldo\s+no\s+(?:aparece|actualiz)|"
+    r"soporte\s+no\s+responde|sin\s+respuesta\s+(?:del?\s+)?soporte|"
+    r"me\s+(?:robaron|estafaron|hackearon|bloquearon\s+la\s+cuenta)|"
+    r"no\s+(?:puedo\s+acceder|me\s+deja\s+entrar)\s+a\s+mi\s+cuenta|"
+    # ── Portuguese (Brazil — huge crypto market) ──────────────────────────
+    r"n[aã]o\s+consigo\s+sacar|saque\s+(?:bloqueado|falhou|pendente|preso)|"
+    r"fundos?\s+(?:bloqueados?|perdidos?|sumiu|desapareceu)|"
+    r"transaç[aã]o\s+(?:falhou|recusada|n[aã]o\s+processada)|"
+    r"conta\s+(?:suspensa|bloqueada|congelada|banida)|"
+    r"n[aã]o\s+recebi\s+(?:o\s+)?(?:depósito|saque|token|fundos?)|"
+    r"dep[oó]sito\s+n[aã]o\s+(?:chegou|caiu|apareceu)|"
+    r"suporte\s+n[aã]o\s+(?:responde|resposta)|me\s+(?:roubaram|golpearam|hackearam)|"
+    r"meu\s+dinheiro\s+(?:sumiu|desapareceu|n[aã]o\s+chegou)|"
+    # ── Turkish (very large and active crypto market) ─────────────────────
+    r"para\s+[cç]ekemiyorum|[cç]ekim\s+(?:tak[iı]l[iı]|ba[sş]ar[iı]s[iı]z|bekliyor)|"
+    r"hesab[iı]m\s+(?:donduruldu|ask[iı]ya\s+al[iı]nd[iı]|engellendi)|"
+    r"i[sş]lem\s+ba[sş]ar[iı]s[iı]z|paran?\s+(?:kayboldu|gitti|bulunam[iı]yor)|"
+    r"destek\s+cevap\s+vermiyor|m[üu][şs]teri\s+hizmetleri\s+(?:yok|cevap\s+vermiyor)|"
+    r"param[iı]\s+[cç]ekemiyorum|yat[iı]r[iı]m(?:ım)?\s+gelmedi|"
+    # ── Indonesian (large crypto population, growing rapidly) ────────────
+    r"tidak\s+bisa\s+(?:withdraw|tarik\s+dana)|penarikan\s+(?:gagal|pending|terganjal)|"
+    r"dana\s+(?:tidak\s+masuk|hilang|raib|belum\s+masuk)|"
+    r"transaksi\s+(?:gagal|bermasalah|error)|akun\s+(?:diblokir|ditangguhkan|dibekukan)|"
+    r"deposit\s+tidak\s+masuk|saldo\s+(?:tidak\s+muncul|belum\s+bertambah)|"
+    r"cs\s+tidak\s+(?:merespons|membalas)|support\s+tidak\s+(?:membalas|membantu)|"
+    r"uang\s+(?:hilang|tidak\s+masuk|raib)|"
+    # ── Russian (CIS countries have very active crypto users) ─────────────
+    r"не\s+могу\s+вывести|вывод\s+(?:застрял|заблокирован|не\s+прошёл|завис)|"
+    r"средства\s+(?:заблокированы|пропали|не\s+поступили|исчезли)|"
+    r"транзакция\s+(?:не\s+прошла|застряла|отклонена|зависла)|"
+    r"аккаунт\s+(?:заблокирован|заморожен|приостановлен|взломан)|"
+    r"поддержка\s+не\s+отвечает|служба\s+поддержки\s+(?:молчит|не\s+реагирует)|"
+    r"деньги\s+(?:пропали|не\s+пришли|украли)|меня\s+взломали|"
+    r"вывести\s+нельзя|депозит\s+не\s+зачислен|"
+    # ── Korean (highest per-capita crypto trading in the world) ───────────
+    r"출금이\s*(?:안돼|안됩니다|실패|안됨|막혔|오류|불가)|"
+    r"입금이\s*(?:안됐|안됩니다|안왔|실패|오류)|"
+    r"계정이\s*(?:정지|동결|잠겼|차단|비활성화)|"
+    r"자금이\s*(?:없어졌|사라졌|증발|묶였|분실)|"
+    r"거래\s*(?:실패|오류|안됨)|고객센터\s*(?:응답없음|답없음|연락안됨)|"
+    r"코인이\s*(?:사라졌|없어졌|분실)|지갑\s*(?:오류|해킹|접속불가)|"
+    # ── Chinese Simplified (enormous crypto user base) ─────────────────────
+    r"提[币幣]失败|出金失败|提现失败|无法提[币幣]|无法提现|"
+    r"账户(?:被封|冻结|封禁|被锁|被停用)|"
+    r"转账失败|充值未到账|资金丢失|钱包被盗|币不见了|"
+    r"提[币幣]卡住|出金卡住|客服不回|联系不上客服|联系不到|"
+    r"无法登录|账号被封|提币受限|出入金失败|"
+    # ── Japanese ──────────────────────────────────────────────────────────
+    r"出金できない|引き出せない|取引失敗|"
+    r"資金が消えた|アカウントが凍結|サポートが応答しない|"
+    r"送金失敗|入金されない|ウォレットが開けない|"
+    # ── Arabic (Middle East + North Africa crypto market) ─────────────────
+    r"لا\s+أستطيع\s+السحب|السحب\s+معلق|الأموال\s+مفقودة|"
+    r"حسابي\s+محظور|لم\s+أستلم|الدعم\s+لا\s+يرد|"
+    r"فشل\s+التحويل|الرصيد\s+مجمد|تم\s+اختراق\s+حسابي"
+    r")",
+    re.IGNORECASE,
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Category headers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1333,6 +1660,25 @@ _CAT_HEADER = {
     "market":        "📊 MARKET",
     "bitcoin":       "₿  BITCOIN",
     "misc":          "🔥 CRYPTO",
+    # Regional
+    "india":         "🇮🇳 INDIA CRYPTO",
+    "latam":         "🌎 LATAM CRYPTO",
+    "africa":        "🌍 AFRICA CRYPTO",
+    "korea":         "🇰🇷 KOREA CRYPTO",
+    "sea":           "🌏 SEA CRYPTO",
+    "turkey":        "🇹🇷 TURKEY CRYPTO",
+    "cis_eeurope":   "🌐 CIS/E-EUROPE CRYPTO",
+    "middle_east":   "🌙 MIDDLE EAST CRYPTO",
+    "global_cex2":   "🏛️ EXCHANGE",
+    "lending2":      "💸 LENDING",
+    "intent_xchain": "⚡ CROSS-CHAIN",
+    "nft_gaming2":   "🎮 GAMING / NFT",
+    "stablecoins":   "💵 STABLECOIN",
+    "solana3":       "◎  SOLANA",
+    "base_op_arb3":  "🔵 L2",
+    "nft3":          "🖼️  NFT",
+    "hyperliquid":   "📈 HYPERLIQUID",
+    "onramps2":      "💳 ON/OFF RAMP",
 }
 
 
@@ -1371,7 +1717,7 @@ def _cat_from_parent(parent_user: str) -> str:
 
 def fetch_issues(
     seen_ids: Optional[set] = None,
-    per_account: int = 20,
+    per_account: int = 40,
 ) -> list[dict]:
     """
     Fetch and classify crypto content from X.
@@ -1384,6 +1730,10 @@ def fetch_issues(
                  Exploits, outages, hacks from monitored accounts.
       Bucket C — official account trending posts (last)
                  Price news, listings, governance, market moves.
+
+    Step 0 (NEW): SearchTimeline keyword search via residential proxy.
+      Searches ALL of Twitter for complaint keywords — not just reply threads
+      under monitored accounts. Massively expands worldwide coverage.
     """
     seen_ids = seen_ids or set()
 
@@ -1396,6 +1746,9 @@ def fetch_issues(
 
     # Refresh CoinGecko discovery (no-op if < refresh interval)
     _refresh_dynamic_accounts()
+
+    # Refresh DeFiLlama protocol list (7,782 handles, one API call every 12h)
+    _refresh_defillama_accounts()
 
     session  = _make_session(auth, ct0)
     cache    = _load_user_id_cache()
@@ -1428,12 +1781,13 @@ def fetch_issues(
         "PeckShieldAlert", "BlockSecTeam",
     ]
     # Rotating slots: pick 24 accounts from ALL categories this cycle.
-    # 16 priority + 24 rotating = 40 total. With 15-min interval each account
+    # 16 priority + 32 rotating = 48 total. With 15-min interval each account
     # set stays safely under Twitter's ~300 UserTweets calls per 15-min window.
-    _ROTATE_SLOTS = 24
+    _ROTATE_SLOTS = 32
 
-    dynamic_new = [h for h in _DYNAMIC_ACCOUNTS if h.lower() not in _seen_set]
-    bg_new      = [h for h in _BG_ENRICHED     if h.lower() not in _seen_set]
+    dynamic_new   = [h for h in _DYNAMIC_ACCOUNTS   if h.lower() not in _seen_set]
+    bg_new        = [h for h in _BG_ENRICHED         if h.lower() not in _seen_set]
+    defillama_new = [h for h in _DEFILLAMA_ACCOUNTS  if h.lower() not in _seen_set]
 
     # Build batch: priority first, then rotating category picks
     batch_set: set[str] = {a.lower() for a in _PRIORITY_ALWAYS}
@@ -1462,8 +1816,15 @@ def fetch_issues(
             batch.append(pick)
             added += 1
 
-    # Fold in CoinGecko-discovered accounts (new projects found automatically)
+    # Fold in CoinGecko + DeFiLlama discovered accounts
+    # DeFiLlama: 4 rotating picks from ~6,800 protocol handles not in static list
     for h in (dynamic_new + bg_new)[:6]:
+        if h.lower() not in batch_set:
+            batch_set.add(h.lower())
+            batch.append(h)
+    # Rotate through DeFiLlama accounts: pick 4 per cycle offset by rotation index
+    dl_offset = (_ROTATION_INDEX * 4) % max(len(defillama_new), 1)
+    for h in (defillama_new[dl_offset:dl_offset+4] or defillama_new[:4]):
         if h.lower() not in batch_set:
             batch_set.add(h.lower())
             batch.append(h)
@@ -1479,13 +1840,71 @@ def fetch_issues(
 
     _rand.shuffle(batch)
     all_accounts_to_scan = batch
-    pool_size = len(_ALL_ACCOUNTS) + len(dynamic_new) + len(bg_new)
+    pool_size = len(_ALL_ACCOUNTS) + len(dynamic_new) + len(bg_new) + len(defillama_new)
 
     logging.info(
         f"x_issues_monitor: scanning {len(all_accounts_to_scan)} accounts "
-        f"(pool={pool_size}, dynamic={len(dynamic_new)}, "
-        f"rotation_idx={_ROTATION_INDEX}, fresh_candidates={len(batch) - len(_PRIORITY_ALWAYS)})"
+        f"(pool={pool_size:,}, static={len(_ALL_ACCOUNTS)}, defillama={len(defillama_new):,}, "
+        f"dynamic={len(dynamic_new)}, rotation_idx={_ROTATION_INDEX}, "
+        f"fresh_candidates={len(batch) - len(_PRIORITY_ALWAYS)})"
     )
+
+    # ── Step 0: Global keyword search via residential proxy ───────────────
+    # Uses SearchTimeline (blocked from GCP IPs) via Webshare residential proxy
+    # to search ALL of Twitter for complaint keywords — not just monitored accounts.
+    # This catches complaints from ANY user about ANY crypto project worldwide.
+    # Each query returns 20 tweets; we rotate through queries each cycle.
+    _SEARCH_QUERIES = [
+        # English complaint queries
+        '"withdrawal stuck" crypto -is:retweet',
+        '"can\'t withdraw" exchange -is:retweet',
+        '"transaction failed" crypto wallet -is:retweet',
+        '"funds missing" crypto exchange -is:retweet',
+        '"account suspended" crypto exchange -is:retweet',
+        '"deposit not received" crypto -is:retweet',
+        '"bridge stuck" crypto -is:retweet',
+        '"swap failed" defi -is:retweet',
+        '"kyc rejected" exchange -is:retweet',
+        '"support not responding" crypto -is:retweet',
+        '"tokens not received" airdrop -is:retweet',
+        '"got liquidated" defi -is:retweet',
+        '"gas fee" failed transaction -is:retweet',
+        '"seed phrase" stolen crypto -is:retweet',
+        '"wallet hacked" crypto -is:retweet',
+        # Non-English complaint queries (massive underserved markets)
+        'retiro bloqueado crypto -is:retweet',       # Spanish: withdrawal blocked
+        'saque bloqueado cripto -is:retweet',        # Portuguese: withdrawal blocked
+        '출금 오류 -is:retweet',                      # Korean: withdrawal error
+        'para çekemiyorum kripto -is:retweet',       # Turkish: can't withdraw crypto
+        'вывод застрял крипто -is:retweet',          # Russian: withdrawal stuck crypto
+        'penarikan gagal kripto -is:retweet',        # Indonesian: withdrawal failed crypto
+        '提币失败 -is:retweet',                       # Chinese: withdrawal failed
+        'السحب معلق كريبتو -is:retweet',            # Arabic: withdrawal pending crypto
+    ]
+    search_complaints: list[dict] = []
+    try:
+        from proxy_pool import make_proxied_session
+        from x_scraper import search_keyword_complaints as _search_kw
+        proxy_sess = make_proxied_session(auth, ct0, __import__('x_scraper').BEARER)
+        if proxy_sess:
+            # Pick 6 queries per cycle, rotating through the full list
+            q_offset = (_ROTATION_INDEX - 1) * 6  # already incremented above
+            selected_queries = [_SEARCH_QUERIES[(q_offset + i) % len(_SEARCH_QUERIES)]
+                                for i in range(6)]
+            for q in selected_queries:
+                results = _search_kw(q, proxy_sess, count=20)
+                for t in results:
+                    tid = t.get("id", "")
+                    if not tid or tid in seen_ids:
+                        continue
+                    t["source_cat"] = "search"
+                    t["search_query"] = q
+                    search_complaints.append(t)
+                    seen_ids.add(tid)
+                time.sleep(1.0)
+            logging.info(f"x_issues_monitor: step0 — {len(search_complaints)} tweets via keyword search")
+    except Exception as _se:
+        logging.warning(f"x_issues_monitor: step0 search error: {_se}")
 
     official_tweets: list[dict] = []
     global_seen: set[str] = set(seen_ids)
@@ -1527,8 +1946,10 @@ def fetch_issues(
     import random
     reply_sources = list(official_tweets)
     random.shuffle(reply_sources)
-    # Cap at 60 to control API usage per cycle (each call = 1 TweetDetail request)
-    reply_sources = reply_sources[:60]
+    # Cap at 120 to control API usage per cycle (each call = 1 TweetDetail request).
+    # Raising from 60→120 doubles the reply thread coverage per cycle, catching
+    # more complaints from low-engagement posts that still have real user replies.
+    reply_sources = reply_sources[:120]
 
     user_reply_tweets: list[dict] = []  # replies from random community users
     total_raw_replies = 0
@@ -1569,19 +1990,55 @@ def fetch_issues(
     # ── Step 3: Classify ──────────────────────────────────────────────────
     global _LAST_SCAN_STATS
 
-    bucket_a: list[dict] = []  # user complaint replies  ← PRIORITY
+    bucket_a: list[dict] = []  # user complaint replies + search results ← PRIORITY
     bucket_b: list[dict] = []  # official urgent
     bucket_c: list[dict] = []  # official trending
 
+    # --- Process Step 0 search results (direct keyword-matched complaints) ---
+    # These come from SearchTimeline across ALL of Twitter — highest coverage.
+    # Apply same spam/complaint filters but no source/category caps (diverse sources).
+    _search_source_count: dict[str, int] = {}
+    for t in search_complaints:
+        text = t.get("text", "")
+        tid  = t.get("id", "")
+        if not text or tid in seen_ids:
+            continue
+        if _is_spam(text):
+            continue
+        # For search results, require either the multilingual pattern OR standard complaint
+        if not (_is_reply_complaint(text) or _MULTILINGUAL_COMPLAINT_RE.search(text)):
+            continue
+        src = t.get("user", "").lower()
+        # Limit per-user to 1 from search results to ensure variety
+        if _search_source_count.get(src, 0) >= 1:
+            continue
+        _search_source_count[src] = _search_source_count.get(src, 0) + 1
+        seen_ids.add(tid)
+        bucket_a.append({
+            "type":          "user_complaint",
+            "category":      "search",
+            "reply_to_user": "",
+            "tweet_id":      tid,
+            "text":          text[:500],
+            "url":           t.get("url", ""),
+            "date":          t.get("date", ""),
+            "user":          t.get("user", ""),
+            "likes":         t.get("likes", 0),
+            "retweets":      t.get("retweets", 0),
+            "tokens":        extract_tokens(text),
+            "urgent":        _is_complaint(text),
+            "search_query":  t.get("search_query", ""),
+        })
+
     # --- Process user reply tweets (Bucket A) ---
     # Two-level cap to enforce variety across ALL projects:
-    #   Per-source cap:   max 1 per official account → stops @Binance flooding
-    #   Per-category cap: max 1 per category (exchanges/wallets/DeFi/bridges/etc.)
+    #   Per-source cap:   max 2 per official account → stops @Binance flooding
+    #   Per-category cap: max 2 per category (exchanges/wallets/DeFi/bridges/etc.)
     #                     so every category gets a turn even across the same cycle
     _per_source_count: dict[str, int] = {}
     _per_cat_count:    dict[str, int] = {}
     _PER_SOURCE_CAP = 2   # up to 2 complaints per official account per cycle
-    _PER_CAT_CAP    = 2   # up to 2 complaints per category per cycle (variety enforced across 65 categories)
+    _PER_CAT_CAP    = 2   # up to 2 complaints per category per cycle (variety enforced across 100+ categories)
 
     for t in user_reply_tweets:
         text = t.get("text", "")
@@ -1658,12 +2115,15 @@ def fetch_issues(
         fetch_debug_sample = {}
 
     _LAST_SCAN_STATS.update({
-        "batch_size":     len(all_accounts_to_scan),
-        "ids_resolved":   ids_resolved,
-        "ids_failed":     ids_failed,
+        "batch_size":      len(all_accounts_to_scan),
+        "pool_size":       pool_size,
+        "defillama_pool":  len(defillama_new),
+        "ids_resolved":    ids_resolved,
+        "ids_failed":      ids_failed,
+        "search_tweets":   len(search_complaints),
         "official_tweets": len(official_tweets),
-        "reply_threads":  len(reply_sources),
-        "raw_replies":    total_raw_replies,
+        "reply_threads":   len(reply_sources),
+        "raw_replies":     total_raw_replies,
         "unique_replies": len(user_reply_tweets),
         "bucket_a":       len(bucket_a),
         "bucket_b":       len(bucket_b),
@@ -1681,7 +2141,7 @@ def fetch_issues(
 async def afetch_issues(
     scraper=None, categories=None,
     seen_ids: Optional[set] = None,
-    per_query_count: int = 20,
+    per_query_count: int = 40,
 ) -> list[dict]:
     import asyncio
     loop = asyncio.get_event_loop()
