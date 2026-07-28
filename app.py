@@ -4778,6 +4778,28 @@ def api_test_twitter():
         return jsonify({"ok": False, "error": str(e), "traceback": traceback.format_exc()[-500:]})
 
 
+@app.route("/api/test-search")
+def api_test_search():
+    """
+    Diagnose SearchTimeline from Render's servers.
+    Tests every available method (twscrape, direct, webshare, iproyal)
+    and reports which ones work and how many tweets each returns.
+    """
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+        from twitter_search import quick_test as _qt
+        from x_scraper import _load_creds
+        auth, ct0 = _load_creds()
+        if not auth or not ct0:
+            return jsonify({"ok": False, "error": "no credentials"})
+        results = _qt(auth, ct0)
+        return jsonify({"ok": True, "results": results})
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()[-600:]})
+
+
 @app.route("/api/start", methods=["POST"])
 def api_start():
     global scheduler_thread
