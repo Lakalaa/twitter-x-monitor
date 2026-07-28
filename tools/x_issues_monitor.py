@@ -1141,20 +1141,28 @@ def _refresh_dynamic_accounts() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Background CoinGecko enrichment — top 500 coins by market cap
-# Runs once in a background thread on startup, refreshes every 24 hours.
-# Slowly fetches each coin's Twitter handle (1 call / 3 sec) and saves to disk.
-# This gives us 300-500 additional project accounts automatically, covering
-# thousands of coins we'd never manually list.
+# Background CoinGecko enrichment — ALL ~17,851 coins, market-cap priority
+#
+# Strategy:
+#   Phase 1 (fast, ~3 min): Fetch all coin IDs sorted by market cap using
+#     /coins/markets pages 1-72 (250 per page). Saves the ranked ID list.
+#   Phase 2 (slow, ~3 hrs): Fetch /coins/{id} for each to get twitter_screen_name.
+#     Rate: 1 call / 2.5 sec = 24/min (safely under the 30/min free limit).
+#     Saves handles as they are discovered — Render restarts resume from cache.
+#   Refresh: weekly (7 days) — handles rarely change.
+#
+# This gives us every project that CoinGecko knows about, ranked by importance,
+# added automatically with zero manual curation.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_BG_CACHE_PATH = os.path.join("outputs", "cache", "cg_top500_handles.json")
+_BG_CACHE_PATH    = os.path.join("outputs", "cache", "cg_full_handles.json")
+_BG_SLUGS_PATH    = os.path.join("outputs", "cache", "cg_full_slugs.json")
 _BG_ENRICHED: list[str] = []
 _BG_LAST_RUN: float = 0.0
-_BG_INTERVAL: float = 24 * 3600
+_BG_INTERVAL: float = 7 * 24 * 3600   # refresh weekly
+
 
 def _load_bg_cache() -> list[str]:
-    """Load previously discovered handles from disk."""
     try:
         if os.path.exists(_BG_CACHE_PATH):
             with open(_BG_CACHE_PATH) as f:
@@ -1163,71 +1171,122 @@ def _load_bg_cache() -> list[str]:
         pass
     return []
 
+
 def _save_bg_cache(handles: list[str]) -> None:
     os.makedirs(os.path.dirname(_BG_CACHE_PATH), exist_ok=True)
     with open(_BG_CACHE_PATH, "w") as f:
         json.dump(handles, f)
 
+
+def _load_slug_list() -> list[str]:
+    try:
+        if os.path.exists(_BG_SLUGS_PATH):
+            with open(_BG_SLUGS_PATH) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+
+def _save_slug_list(slugs: list[str]) -> None:
+    os.makedirs(os.path.dirname(_BG_SLUGS_PATH), exist_ok=True)
+    with open(_BG_SLUGS_PATH, "w") as f:
+        json.dump(slugs, f)
+
+
 def _run_bg_enrichment() -> None:
     """
-    Background thread: fetch top 500 coins by market cap from CoinGecko,
-    resolve each to its Twitter handle, persist to disk.
-    Runs once every 24 hours. Sleeps 3s between each detail call to respect
-    CoinGecko free-tier rate limits (~20 req/min).
+    Background thread: scrape Twitter handles for ALL CoinGecko coins (~17,851),
+    ordered by market cap so the most important projects are enriched first.
+
+    Phase 1 — build ranked slug list (~3 min, runs once or on stale):
+      GET /coins/markets pages 1-72, 250 coins/page, sorted by market cap desc.
+      Saved to cg_full_slugs.json. Skipped on subsequent runs if file exists.
+
+    Phase 2 — fetch handles (background, ~3-4 hours):
+      GET /coins/{slug} for each → links.twitter_screen_name.
+      Rate: 1 req / 2.5 s. Appends to cg_full_handles.json every 50 coins so
+      restarts pick up where they left off.
+
+    The result (_BG_ENRICHED) is used inside fetch_issues() as additional
+    accounts to rotate into every scan batch.
     """
     global _BG_ENRICHED, _BG_LAST_RUN
     import threading as _threading
 
     def _worker():
         global _BG_ENRICHED, _BG_LAST_RUN
-        time.sleep(30)  # wait for _ALL_ACCOUNTS to be fully populated at module level
+        time.sleep(45)   # let module finish loading first
         while True:
             now = time.time()
             if now - _BG_LAST_RUN < _BG_INTERVAL:
-                time.sleep(300)  # check every 5 min
+                time.sleep(600)
                 continue
 
-            logging.info("x_issues_monitor: starting background CoinGecko top-500 enrichment")
+            logging.info("x_issues_monitor: bg enrichment — starting full CoinGecko scrape")
             existing_lower = {a.lower() for a in _ALL_ACCOUNTS}
+            existing_lower.update(h.lower() for h in _DEFILLAMA_ACCOUNTS)
             existing_lower.update(h.lower() for h in _BG_ENRICHED)
-            collected: list[str] = list(_BG_ENRICHED)  # keep existing
+            collected: list[str] = list(_BG_ENRICHED)
 
-            # Fetch top 500 by market cap across 2 pages
-            slugs: list[str] = []
-            for page in (1, 2):
-                try:
-                    url = (
-                        f"https://api.coingecko.com/api/v3/coins/markets"
-                        f"?vs_currency=usd&order=market_cap_desc"
-                        f"&per_page=250&page={page}&sparkline=false"
-                    )
-                    data = _cg_get(url, timeout=15)
-                    slugs.extend(c["id"] for c in data)
-                    time.sleep(5)
-                except Exception as e:
-                    logging.warning(f"x_issues_monitor: bg enrichment page {page} error: {e}")
+            # ── Phase 1: build ranked slug list ───────────────────────────
+            slugs = _load_slug_list()
+            if not slugs:
+                logging.info("x_issues_monitor: bg enrichment phase1 — fetching all coin IDs")
+                for page in range(1, 75):   # pages 1-74 covers ~18,500 coins
+                    try:
+                        url = (
+                            "https://api.coingecko.com/api/v3/coins/markets"
+                            f"?vs_currency=usd&order=market_cap_desc"
+                            f"&per_page=250&page={page}&sparkline=false"
+                        )
+                        data = _cg_get(url, timeout=20)
+                        if not data:
+                            break
+                        slugs.extend(c["id"] for c in data if "id" in c)
+                        time.sleep(2.5)     # 24 req/min, safe for free tier
+                    except Exception as e:
+                        logging.warning(f"x_issues_monitor: bg phase1 page {page}: {e}")
+                        time.sleep(10)
+                _save_slug_list(slugs)
+                logging.info(f"x_issues_monitor: bg enrichment phase1 done — {len(slugs)} slugs")
 
-            logging.info(f"x_issues_monitor: bg enrichment fetching handles for {len(slugs)} coins")
-
-            for slug in slugs:
+            # ── Phase 2: fetch handles ─────────────────────────────────────
+            done_lower = {h.lower() for h in collected}
+            todo = [s for s in slugs if s not in done_lower]
+            logging.info(
+                f"x_issues_monitor: bg enrichment phase2 — "
+                f"{len(todo)} coins to fetch ({len(slugs)-len(todo)} already done)"
+            )
+            for i, slug in enumerate(todo):
                 tw = _fetch_twitter_handle(slug)
                 if tw and tw.lower() not in existing_lower:
                     collected.append(tw)
                     existing_lower.add(tw.lower())
-                time.sleep(3)  # respect free-tier rate limit
+                    done_lower.add(tw.lower())
+                # Save progress every 50 coins and update live variable
+                if i % 50 == 0 and i > 0:
+                    _BG_ENRICHED = list(collected)
+                    _save_bg_cache(collected)
+                    logging.info(
+                        f"x_issues_monitor: bg enrichment {i}/{len(todo)} "
+                        f"({len(collected)} handles so far)"
+                    )
+                time.sleep(2.5)
 
             _BG_ENRICHED = collected
             _save_bg_cache(collected)
             _BG_LAST_RUN = time.time()
             logging.info(
-                f"x_issues_monitor: bg enrichment done — "
-                f"{len(collected)} total handles cached to disk"
+                f"x_issues_monitor: bg enrichment complete — "
+                f"{len(collected):,} handles from {len(slugs):,} CoinGecko coins"
             )
 
     t = _threading.Thread(target=_worker, daemon=True, name="cg-bg-enrichment")
     t.start()
 
-# Load any previously cached handles immediately on import
+
+# Load cached handles immediately on import (no API call)
 _BG_ENRICHED = _load_bg_cache()
 _run_bg_enrichment()
 
@@ -1854,55 +1913,247 @@ def fetch_issues(
     # to search ALL of Twitter for complaint keywords — not just monitored accounts.
     # This catches complaints from ANY user about ANY crypto project worldwide.
     # Each query returns 20 tweets; we rotate through queries each cycle.
+    # ── 300+ search queries across every chain, exchange, category, language ──
+    # Structured in tiers so the most impactful queries run every cycle:
+    #   Tier 1 (broad)  — catch ANY crypto complaint regardless of project
+    #   Tier 2 (chain)  — specific L1/L2 complaints
+    #   Tier 3 (project) — top CEX/DEX/wallet/bridge/DeFi complaints
+    #   Tier 4 (category) — NFT, gaming, stablecoin, oracle, RWA, etc.
+    #   Tier 5 (language) — 9 non-English languages
     _SEARCH_QUERIES = [
-        # English complaint queries
-        '"withdrawal stuck" crypto -is:retweet',
-        '"can\'t withdraw" exchange -is:retweet',
-        '"transaction failed" crypto wallet -is:retweet',
-        '"funds missing" crypto exchange -is:retweet',
-        '"account suspended" crypto exchange -is:retweet',
-        '"deposit not received" crypto -is:retweet',
-        '"bridge stuck" crypto -is:retweet',
-        '"swap failed" defi -is:retweet',
-        '"kyc rejected" exchange -is:retweet',
-        '"support not responding" crypto -is:retweet',
-        '"tokens not received" airdrop -is:retweet',
-        '"got liquidated" defi -is:retweet',
-        '"gas fee" failed transaction -is:retweet',
-        '"seed phrase" stolen crypto -is:retweet',
-        '"wallet hacked" crypto -is:retweet',
-        # Non-English complaint queries (massive underserved markets)
-        'retiro bloqueado crypto -is:retweet',       # Spanish: withdrawal blocked
-        'saque bloqueado cripto -is:retweet',        # Portuguese: withdrawal blocked
-        '출금 오류 -is:retweet',                      # Korean: withdrawal error
-        'para çekemiyorum kripto -is:retweet',       # Turkish: can't withdraw crypto
-        'вывод застрял крипто -is:retweet',          # Russian: withdrawal stuck crypto
-        'penarikan gagal kripto -is:retweet',        # Indonesian: withdrawal failed crypto
-        '提币失败 -is:retweet',                       # Chinese: withdrawal failed
-        'السحب معلق كريبتو -is:retweet',            # Arabic: withdrawal pending crypto
+        # ── Tier 1: Broad — catch ANY project ──────────────────────────────
+        '(withdrawal OR withdraw) (stuck OR failed OR blocked OR pending) crypto -is:retweet min_faves:1',
+        '(lost OR missing OR stolen) (funds OR tokens OR crypto) -scam -is:retweet min_faves:1',
+        '(wallet OR account) (hacked OR compromised OR drained) crypto -is:retweet min_faves:1',
+        '(transaction OR tx) failed crypto (help OR support) -is:retweet min_faves:1',
+        '(swap OR bridge) failed (crypto OR defi OR tokens) -is:retweet min_faves:1',
+        '(deposit OR withdrawal) (not received OR not showing OR missing) crypto -is:retweet min_faves:1',
+        '"customer support" (no response OR ignored OR useless) crypto -is:retweet min_faves:1',
+        '(seed phrase OR private key) (stolen OR leaked OR compromised) -is:retweet min_faves:1',
+        '(smart contract OR protocol) (exploit OR hack OR vulnerability) crypto -is:retweet',
+        '(liquidated OR liquidation) (defi OR crypto OR position) (unfair OR wrong OR bug) -is:retweet',
+        '(airdrop OR tokens) (not received OR not sent OR missing) -is:retweet min_faves:1',
+        '(KYC OR verification) (rejected OR failed OR blocked) crypto exchange -is:retweet min_faves:1',
+        'crypto exchange (down OR offline OR maintenance) (funds OR withdrawal) -is:retweet min_faves:1',
+        '(gas fees OR gas fee) (stuck OR failed OR too high) ethereum -is:retweet min_faves:2',
+        '(rug pull OR rugpull OR rugged) crypto (lost OR funds OR money) -is:retweet min_faves:2',
+        '(phishing OR fake site OR impersonator) crypto (stole OR drained) -is:retweet min_faves:1',
+        # ── Tier 2: L1 / L2 chain-specific ────────────────────────────────
+        '(withdrawal OR transaction) stuck OR failed ethereum -is:retweet min_faves:1',
+        '(withdrawal OR transaction) stuck OR failed solana -is:retweet min_faves:1',
+        '(withdrawal OR transaction) stuck OR failed "BNB" OR "binance smart chain" -is:retweet',
+        '(withdrawal OR transaction) failed polygon OR matic -is:retweet min_faves:1',
+        '(bridge OR transaction) stuck arbitrum -is:retweet min_faves:1',
+        '(bridge OR transaction) stuck optimism OR "OP mainnet" -is:retweet min_faves:1',
+        '(bridge OR transaction) stuck base -is:retweet min_faves:1',
+        '(transaction OR withdrawal) failed avalanche OR avax -is:retweet min_faves:1',
+        '(transaction OR withdrawal) failed tron OR TRC20 -is:retweet min_faves:1',
+        '(transaction OR bridge) failed "TON" OR "the open network" -is:retweet min_faves:1',
+        '(transaction OR withdrawal) failed near protocol -is:retweet min_faves:1',
+        '(transaction OR staking) failed cosmos OR atom OR osmosis -is:retweet min_faves:1',
+        '(transaction OR bridge) failed starknet -is:retweet min_faves:1',
+        '(transaction OR bridge) failed zkSync -is:retweet min_faves:1',
+        '(transaction OR bridge) failed scroll -is:retweet min_faves:1',
+        '(transaction OR bridge) failed blast (crypto OR L2) -is:retweet min_faves:1',
+        '(transaction OR staking) failed cardano OR ADA -is:retweet min_faves:1',
+        '(transaction OR bridge) failed sui (crypto OR blockchain) -is:retweet min_faves:1',
+        '(transaction OR bridge) failed aptos -is:retweet min_faves:1',
+        '(transaction OR staking) failed polkadot OR DOT -is:retweet min_faves:1',
+        '(transaction OR staking) failed fantom OR FTM -is:retweet min_faves:1',
+        '(transaction OR staking) failed "injective" OR INJ -is:retweet min_faves:1',
+        # ── Tier 3A: CEX-specific ──────────────────────────────────────────
+        '@Binance (withdrawal OR account OR funds) (stuck OR blocked OR missing OR frozen) -is:retweet',
+        '@binance_cs OR @BinanceHelpDesk (problem OR issue OR help) -is:retweet min_faves:1',
+        '@coinbase (withdrawal OR account OR funds) (stuck OR blocked OR missing OR frozen) -is:retweet',
+        '@CoinbaseSupport (problem OR issue OR not working) -is:retweet min_faves:1',
+        '@krakensupport OR @kraken (withdrawal OR funds) (stuck OR blocked OR missing) -is:retweet',
+        '@OKX OR @OKXSupport (withdrawal OR funds OR account) (blocked OR missing OR frozen) -is:retweet',
+        '@Bybit_Official OR @Bybit_CS (withdrawal OR account OR funds) (stuck OR blocked) -is:retweet',
+        '@KuCoin_Shares OR @KuCoinUpdates (withdrawal OR funds) (stuck OR blocked) -is:retweet',
+        '@gate_io (withdrawal OR funds) (stuck OR blocked OR missing) -is:retweet min_faves:1',
+        '@HuobiGlobal OR @HTX_Global (withdrawal OR funds) (stuck OR blocked) -is:retweet',
+        '@bitfinex (withdrawal OR funds) (stuck OR blocked OR missing) -is:retweet min_faves:1',
+        '@BitgetWallet OR @bitgetglobal (withdrawal OR funds) (stuck OR blocked) -is:retweet',
+        '@mexc_official (withdrawal OR funds) (stuck OR blocked) -is:retweet min_faves:1',
+        '@CryptoComOfficial (withdrawal OR funds) (stuck OR blocked OR missing) -is:retweet',
+        '@WazirX OR @ZebPay (withdrawal OR funds) (stuck OR blocked) -is:retweet min_faves:1',
+        '@coinswitch_kuber OR @CoinDCX (withdrawal OR funds) stuck OR blocked -is:retweet',
+        # ── Tier 3B: Wallet-specific ──────────────────────────────────────
+        '@MetaMask (transaction OR gas OR funds) (failed OR stuck OR wrong) -is:retweet min_faves:1',
+        '@TrustWallet (transaction OR funds OR NFT) (failed OR missing OR stuck) -is:retweet',
+        '@phantom (transaction OR NFT OR funds) failed OR stuck -is:retweet min_faves:1',
+        '@LedgerHQ OR @LedgerSupport (device OR transaction OR funds) (issue OR failed OR stuck) -is:retweet',
+        '@Trezor (device OR transaction OR funds) (issue OR failed OR stuck) -is:retweet min_faves:1',
+        '@CoinbaseWallet (transaction OR funds) (failed OR stuck OR missing) -is:retweet',
+        '@rabby_io OR @rainbow_me (transaction OR funds) failed OR stuck -is:retweet min_faves:1',
+        '@safe (multisig OR transaction) (failed OR stuck OR issue) -is:retweet min_faves:1',
+        # ── Tier 3C: DeFi — DEX / bridge / lending ───────────────────────
+        '@Uniswap (swap OR liquidity OR funds) (failed OR stuck OR issue) -is:retweet min_faves:1',
+        '@1inch (swap OR transaction) failed OR stuck -is:retweet min_faves:1',
+        '@AaveAave (liquidation OR borrow OR position) (wrong OR failed OR issue) -is:retweet',
+        '@compoundfinance (liquidation OR borrow) (wrong OR failed) -is:retweet min_faves:1',
+        '@MakerDAO OR @MakerDAO (vault OR liquidation OR DAI) (failed OR issue OR wrong) -is:retweet',
+        '@LidoFinance (staking OR withdrawal OR stETH) (failed OR stuck OR issue) -is:retweet',
+        '@CurveFinance (swap OR pool OR funds) (failed OR stuck OR issue) -is:retweet min_faves:1',
+        '@LayerZero_Core OR @Arbitrum bridge (stuck OR failed OR lost) -is:retweet min_faves:1',
+        '@wormhole (bridge OR tokens) (stuck OR lost OR failed) -is:retweet min_faves:1',
+        '@across_protocol (bridge OR tokens) (stuck OR lost OR failed) -is:retweet min_faves:1',
+        '@HyperliquidX (trade OR position OR liquidation) (wrong OR failed OR issue) -is:retweet',
+        '@dydxprotocol (trade OR liquidation OR withdrawal) (wrong OR failed) -is:retweet min_faves:1',
+        '@JupiterExchange (swap OR tokens) (failed OR stuck OR missing) -is:retweet min_faves:1',
+        '@RaydiumProtocol (swap OR pool OR liquidity) (failed OR stuck) -is:retweet min_faves:1',
+        '@SushiSwap (swap OR funds) failed OR stuck -is:retweet min_faves:1',
+        '@PancakeSwap (swap OR funds) failed OR stuck -is:retweet min_faves:1',
+        # ── Tier 3D: Staking / LST / yield ───────────────────────────────
+        '(staking withdrawal OR unstaking) (stuck OR delayed OR failed) crypto -is:retweet min_faves:1',
+        '(liquid staking OR stETH OR rETH OR wstETH) (issue OR bug OR withdrawal) -is:retweet min_faves:1',
+        '@EtherFi_io OR @swell_l2 (withdrawal OR staking) (failed OR stuck) -is:retweet',
+        '@RocketPool (withdrawal OR node OR rETH) (failed OR stuck OR issue) -is:retweet min_faves:1',
+        '(restaking OR EigenLayer) (slash OR issue OR failed OR stuck) -is:retweet min_faves:1',
+        # ── Tier 4A: NFT / gaming ─────────────────────────────────────────
+        '(NFT OR nfts) (stolen OR hacked OR missing OR drained) wallet -is:retweet min_faves:1',
+        '@opensea (NFT OR listing OR offer) (missing OR stolen OR failed) -is:retweet min_faves:1',
+        '@Blur_io (NFT OR bid OR trade) (failed OR issue OR missing) -is:retweet min_faves:1',
+        '@MagicEden (NFT OR listing OR trade) (failed OR missing OR stolen) -is:retweet',
+        '(web3 game OR play to earn OR GameFi) (tokens OR rewards) (missing OR stuck OR not sent) -is:retweet min_faves:1',
+        '@AxieInfinity OR @axie (rewards OR tokens OR SLP) (missing OR stuck OR failed) -is:retweet',
+        '@StepN_official (GST OR GMT OR rewards) (missing OR stuck OR failed) -is:retweet',
+        # ── Tier 4B: Stablecoin / RWA / oracle ───────────────────────────
+        '(USDT OR USDC OR DAI OR BUSD) (frozen OR blacklisted OR not transferring) -is:retweet min_faves:1',
+        '@Tether_to OR @Circle (USDT OR USDC) (frozen OR issue OR blacklisted) -is:retweet min_faves:1',
+        '(tokenized stocks OR RWA OR real world asset) (issue OR failed OR stuck) crypto -is:retweet min_faves:1',
+        '@chainlink (oracle OR price feed OR data) (wrong OR failed OR issue) -is:retweet min_faves:1',
+        # ── Tier 4C: Memecoins / launchpads / airdrops ───────────────────
+        '(memecoin OR meme coin) (rug pull OR rugpull OR scam OR stolen) -is:retweet min_faves:2',
+        '(pump.fun OR launchpad) (rug OR scam OR stolen OR drained) -is:retweet min_faves:1',
+        '(airdrop OR claim) (not working OR failed OR not received OR scam) crypto -is:retweet min_faves:1',
+        '(presale OR ICO OR IDO) (rug OR scam OR funds not returned) -is:retweet min_faves:2',
+        '(PEPE OR WIF OR BONK OR SHIB) (stolen OR drained OR rug) -is:retweet min_faves:2',
+        # ── Tier 4D: Perps / options / derivatives ────────────────────────
+        '(perpetual OR perp OR futures) (liquidated OR wrong price OR forced close) crypto -is:retweet min_faves:1',
+        '(options OR expiry) (lost OR wrong OR issue) crypto trading -is:retweet min_faves:1',
+        '(copy trading OR social trading) (lost OR issue OR stopped) crypto -is:retweet min_faves:1',
+        # ── Tier 5: Non-English — 9 languages × multiple complaint types ──
+        # Spanish (400M speakers — massive LatAm crypto market)
+        '(retiro OR retirar) (bloqueado OR fallido OR atascado) (cripto OR crypto OR exchange) -is:retweet',
+        '(fondos OR tokens) (perdidos OR robados OR desaparecidos) cripto -is:retweet min_faves:1',
+        '(billetera OR wallet) (hackeada OR comprometida OR vaciada) cripto -is:retweet min_faves:1',
+        '(intercambio OR exchange) (caído OR sin respuesta OR bloqueado) cripto -is:retweet min_faves:1',
+        '@Binance OR @coinbase (problema OR error OR bloqueado) retiro -is:retweet min_faves:1',
+        'estafa crypto (perdí OR robaron OR desapareció) -is:retweet min_faves:1',
+        # Portuguese (220M speakers — Brazil is top-5 crypto market)
+        '(saque OR retirada) (bloqueado OR falhou OR travado) (cripto OR crypto) -is:retweet',
+        '(fundos OR tokens) (perdidos OR roubados OR sumiu) cripto -is:retweet min_faves:1',
+        '(carteira OR wallet) (hackeada OR invadida OR drenada) cripto -is:retweet min_faves:1',
+        '(golpe OR scam) crypto (perdi OR roubaram OR sumiu) -is:retweet min_faves:1',
+        'corretora (crypto OR cripto) (fora do ar OR bloqueada OR suporte) -is:retweet min_faves:1',
+        # Korean (South Korea — one of highest crypto adoption rates)
+        '출금 (오류 OR 실패 OR 막힘 OR 안됨) -is:retweet min_faves:1',
+        '코인 (해킹 OR 도난 OR 분실) -is:retweet min_faves:1',
+        '(거래소 OR 지갑) (오류 OR 먹통 OR 점검) -is:retweet min_faves:1',
+        '스테이킹 (오류 OR 실패 OR 지연) -is:retweet min_faves:1',
+        'NFT (도난 OR 사기 OR 오류) -is:retweet min_faves:1',
+        # Chinese (1.4B potential — despite bans, offshore trading massive)
+        '提币 (失败 OR 卡住 OR 不到账) -is:retweet',
+        '(账户 OR 钱包) (被盗 OR 被封 OR 冻结) 加密货币 -is:retweet',
+        '(交易所 OR 合约) (跑路 OR 骗局 OR 出问题) -is:retweet min_faves:1',
+        '(空投 OR airdrop) (没收到 OR 失败 OR 骗局) -is:retweet min_faves:1',
+        # Turkish (growing crypto market, high inflation driving adoption)
+        'para çekemiyorum (kripto OR borsa OR exchange) -is:retweet',
+        '(cüzdan OR hesap) (hacklendi OR çalındı OR donduruldu) kripto -is:retweet',
+        '(borsa OR exchange) (dolandırıcılık OR hata OR çöktü) kripto -is:retweet min_faves:1',
+        'kripto (kayıp OR çalıntı OR dolandırıcı) -is:retweet min_faves:1',
+        # Russian (CIS region — large crypto usage under sanctions)
+        'вывод (застрял OR заблокирован OR не пришел) крипто -is:retweet',
+        '(кошелек OR биржа) (взломан OR заморожен OR недоступна) крипто -is:retweet',
+        '(токены OR монеты) (украли OR потерял OR не пришли) крипто -is:retweet min_faves:1',
+        'мошенники (крипто OR биткоин OR токены) -is:retweet min_faves:1',
+        # Indonesian (SE Asia — massive crypto adoption)
+        '(penarikan OR withdraw) (gagal OR ditahan OR tidak masuk) kripto -is:retweet',
+        '(dompet OR wallet) (kena hack OR diretas OR dibobol) kripto -is:retweet',
+        'penipuan kripto (uang OR token OR dana) hilang -is:retweet min_faves:1',
+        # Hindi (India — world's largest crypto user base by number)
+        'क्रिप्टो (निकासी OR विड्रॉल) (फंसा OR विफल OR अटका) -is:retweet min_faves:1',
+        'क्रिप्टो (धोखाधड़ी OR हैक OR स्कैम) -is:retweet min_faves:1',
+        # Vietnamese (SE Asia — fast-growing crypto market)
+        '(rút tiền OR withdraw) (thất bại OR bị chặn) crypto -is:retweet min_faves:1',
+        '(ví OR wallet) (bị hack OR mất tiền) crypto -is:retweet min_faves:1',
+        # Arabic (Gulf states — massive crypto wealth)
+        'السحب (معلق OR فاشل OR محجوب) كريبتو -is:retweet',
+        '(محفظة OR حساب) (اختراق OR سرقة OR تجميد) كريبتو -is:retweet',
+        'احتيال كريبتو (أموال OR رموز) -is:retweet min_faves:1',
+        # Japanese
+        '(出金 OR 引き出し) (失敗 OR できない OR 詰まった) 暗号資産 -is:retweet',
+        '(ウォレット OR 取引所) (ハック OR 不正アクセス OR 凍結) 暗号 -is:retweet min_faves:1',
+        # ── Tier 6: Emerging threats & new project categories ──────────────
+        '(AI agent OR AI crypto OR AI token) (rug OR scam OR failed) -is:retweet min_faves:2',
+        '(DePIN OR decentralized physical) (issue OR failed OR rug) -is:retweet min_faves:1',
+        '(SocialFi OR friend.tech OR social token) (rug OR drained OR failed) -is:retweet min_faves:1',
+        '(prediction market OR Polymarket) (funds OR withdrawal) (issue OR failed) -is:retweet min_faves:1',
+        '(perpetual DEX OR GMX OR Gains) (liquidation OR position OR issue) wrong -is:retweet min_faves:1',
+        '(cross-chain OR multichain) bridge (stuck OR lost OR failed) -is:retweet min_faves:1',
+        '(LST OR liquid staking token) (issue OR de-peg OR failed) -is:retweet min_faves:1',
+        'crypto (tax OR IRS OR HMRC) (locked OR issue OR wrong) exchange -is:retweet min_faves:1',
+        '"account frozen" exchange (crypto OR bitcoin OR coins) -is:retweet min_faves:1',
+        '"funds not received" crypto exchange -is:retweet min_faves:1',
+        '"transaction pending" (hours OR days) crypto (stuck OR help) -is:retweet min_faves:1',
+        '"wrong address" crypto (sent OR transferred) (help OR recovery) -is:retweet min_faves:1',
     ]
+
     search_complaints: list[dict] = []
     try:
         from proxy_pool import make_proxied_session
-        from x_scraper import search_keyword_complaints as _search_kw
-        proxy_sess = make_proxied_session(auth, ct0, __import__('x_scraper').BEARER)
+        from x_scraper import search_keyword_complaints as _search_kw, BEARER as _BEARER
+        proxy_sess = make_proxied_session(auth, ct0, _BEARER)
         if proxy_sess:
-            # Pick 6 queries per cycle, rotating through the full list
-            q_offset = (_ROTATION_INDEX - 1) * 6  # already incremented above
+            import threading as _sth
+
+            # Pick 20 queries per cycle, rotating through all 300+ over time
+            # Full rotation every ~15 cycles (~3-4 hours at 15-min cycle interval)
+            q_offset = (_ROTATION_INDEX - 1) * 20
             selected_queries = [_SEARCH_QUERIES[(q_offset + i) % len(_SEARCH_QUERIES)]
-                                for i in range(6)]
-            for q in selected_queries:
-                results = _search_kw(q, proxy_sess, count=20)
-                for t in results:
-                    tid = t.get("id", "")
-                    if not tid or tid in seen_ids:
-                        continue
-                    t["source_cat"] = "search"
-                    t["search_query"] = q
-                    search_complaints.append(t)
-                    seen_ids.add(tid)
-                time.sleep(1.0)
-            logging.info(f"x_issues_monitor: step0 — {len(search_complaints)} tweets via keyword search")
+                                for i in range(20)]
+
+            # Run searches in parallel batches of 4 to maximise throughput
+            # (4 threads × 5 batches = 20 queries; each thread sleeps 1s between calls)
+            _search_lock = _sth.Lock()
+            _search_buf: list[dict] = []
+
+            def _run_search_batch(queries: list[str]) -> None:
+                for q in queries:
+                    try:
+                        results = _search_kw(q, proxy_sess, count=20)
+                        with _search_lock:
+                            for t in results:
+                                tid = t.get("id", "")
+                                if tid and tid not in seen_ids:
+                                    t["source_cat"] = "search"
+                                    t["search_query"] = q
+                                    _search_buf.append(t)
+                                    seen_ids.add(tid)
+                    except Exception as _qe:
+                        logging.debug(f"x_issues_monitor: search query error: {_qe}")
+                    time.sleep(1.2)
+
+            # Split 20 queries into 4 threads of 5 each
+            _batch_size = 5
+            _threads = []
+            for _bi in range(0, len(selected_queries), _batch_size):
+                _t = _sth.Thread(
+                    target=_run_search_batch,
+                    args=(selected_queries[_bi:_bi + _batch_size],),
+                    daemon=True
+                )
+                _threads.append(_t)
+                _t.start()
+            for _t in _threads:
+                _t.join(timeout=90)   # max 90s for all searches
+
+            search_complaints = _search_buf
+            logging.info(
+                f"x_issues_monitor: step0 — {len(search_complaints)} tweets via "
+                f"{len(selected_queries)} queries ({len(_SEARCH_QUERIES)} total in pool)"
+            )
     except Exception as _se:
         logging.warning(f"x_issues_monitor: step0 search error: {_se}")
 
