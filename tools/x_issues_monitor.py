@@ -2365,7 +2365,7 @@ def fetch_issues(
         "batch_size":      len(all_accounts_to_scan),
         "pool_size":       pool_size,
         "defillama_pool":  len(defillama_new),
-        "static_accounts": list(_ALL_ACCOUNTS.keys())[:5],   # sample for display
+        "static_accounts": _ALL_ACCOUNTS[:5],   # sample for display
         "ids_resolved":    ids_resolved,
         "ids_failed":      ids_failed,
         "search_tweets":   len(search_complaints),
