@@ -4712,38 +4712,48 @@ def api_check_now():
 
 @app.route("/api/test-twitter")
 def api_test_twitter():
-    """Quick token health check — fetches tweets from @ethereum and returns raw debug info."""
+    """Token health check + bulk ID resolver. ?account=name resolves one account."""
     try:
         import sys as _sys, json as _json
         _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
-        from x_scraper import _make_session, _load_creds, get_user_id, fetch_user_tweets, _load_user_id_cache, _QID_USER_TWEETS, _TWEET_FEATURES, BEARER
+        from x_scraper import _make_session, _load_creds, get_user_id, fetch_user_tweets, _load_user_id_cache, _save_user_id_cache
         auth, ct0 = _load_creds()
         if not auth:
             return jsonify({"ok": False, "error": "no auth token"})
         session = _make_session(auth, ct0)
         cache   = _load_user_id_cache()
-        uid = get_user_id("ethereum", session, cache)
+
+        # ?account=NAME to resolve a specific account
+        target = request.args.get("account", "ethereum")
+
+        # ?bulk=1 resolves all priority accounts and returns uid map
+        if request.args.get("bulk") == "1":
+            priority = [
+                "BinanceHelpDesk", "CoinbaseSupport", "KrakenSupport", "Bybit_CS",
+                "MetaMask_Support", "TrustWalletApp", "LedgerSupport",
+                "AaveAave", "JupiterExchange", "arbitrum", "base", "circle",
+                "OKXSupport", "Phantom", "Uniswap", "Tether_to",
+                "HyperliquidX", "driftprotocol", "PeckShieldAlert", "MagicEden",
+            ]
+            results = {}
+            for acct in priority:
+                uid = get_user_id(acct, session, cache)
+                results[acct] = uid
+                time.sleep(0.8)
+            _save_user_id_cache(cache)
+            return jsonify({"ok": True, "ids": results})
+
+        uid = get_user_id(target, session, cache)
         if not uid:
-            return jsonify({"ok": False, "error": "get_user_id returned None for @ethereum"})
-
-        # Make the raw request and capture full response
-        url = f"https://x.com/i/api/graphql/{_QID_USER_TWEETS}/UserTweets"
-        r = session.get(url, params={
-            "variables": _json.dumps({"userId": uid, "count": 3, "includePromotedContent": False, "withVoice": True, "withV2Timeline": True}, separators=(",", ":")),
-            "features": _json.dumps(_TWEET_FEATURES, separators=(",", ":")),
-        }, timeout=15)
-
-        tweets = fetch_user_tweets(uid, "ethereum", session, count=3)
-        raw_snippet = str(r.text)[:800] if hasattr(r, 'text') else "no text"
-
+            return jsonify({"ok": False, "error": f"get_user_id returned None for @{target}"})
+        tweets = fetch_user_tweets(uid, target, session, count=3)
+        _save_user_id_cache(cache)
         return jsonify({
-            "ok":          True,
-            "uid":         uid,
-            "http_status": r.status_code,
-            "tweets":      len(tweets),
-            "sample":      tweets[0].get("text", "")[:120] if tweets else None,
-            "raw_snippet": raw_snippet,
-            "qid":         _QID_USER_TWEETS,
+            "ok":     True,
+            "account": target,
+            "uid":    uid,
+            "tweets": len(tweets),
+            "sample": tweets[0].get("text", "")[:120] if tweets else None,
         })
     except Exception as e:
         import traceback
