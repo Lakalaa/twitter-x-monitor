@@ -1,0 +1,3 @@
+- [Twitter GraphQL Query IDs](twitter-graphql-query-ids.md) — CreateTweet/Like/Retweet IDs rotate; extract fresh from Twitter JS bundle when 404s appear
+- [X Scraper Architecture](x-scraper-architecture.md) — QIDs updated 2026-07-28; SearchTimeline via Webshare proxy; DeFiLlama 7782 protocols; 103 categories; screen_name location quirks
+- [X Issues Monitor — Root Causes & Fixes](x-issues-monitor-fixes.md) — Empty cache / rotation reset / regex recompile bugs all diagnosed and fixed; hardcoded IDs for 14 priority accounts
