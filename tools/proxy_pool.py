@@ -58,6 +58,46 @@ def get_proxy_url() -> str:
     return ""
 
 
+def _load_iproyal_proxy_url() -> str:
+    """Return IPRoyal rotating residential proxy URL, or empty string."""
+    if not _IPROYAL_KEY:
+        return ""
+    # IPRoyal rotating residential: user token encoded in username field
+    # Format: geo.iproyal.com:12321 with user_{key} / {key}
+    # The API key itself is the password; username is fixed "user"
+    return f"http://user:{_IPROYAL_KEY}@geo.iproyal.com:12321"
+
+
+def make_iproyal_session(auth: str, ct0: str, bearer: str):
+    """
+    Create a curl_cffi Session routed through IPRoyal residential proxy.
+    Second fallback when Webshare fails. Returns None if key not set.
+    """
+    proxy_url = _load_iproyal_proxy_url()
+    if not proxy_url:
+        return None
+    try:
+        import curl_cffi.requests as _cffi
+        s = _cffi.Session(
+            impersonate="chrome120",
+            proxies={"http": proxy_url, "https": proxy_url},
+        )
+        s.headers.update({
+            "Authorization":             f"Bearer {bearer}",
+            "Cookie":                    f"auth_token={auth}; ct0={ct0}",
+            "X-Csrf-Token":              ct0,
+            "User-Agent":                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "x-twitter-active-user":     "yes",
+            "x-twitter-auth-type":       "OAuth2Session",
+            "x-twitter-client-language": "en",
+            "Referer":                   "https://x.com/search",
+        })
+        return s
+    except ImportError:
+        logging.warning("proxy_pool: curl_cffi not available — IPRoyal sessions disabled")
+        return None
+
+
 def make_proxied_session(auth: str, ct0: str, bearer: str):
     """
     Create a curl_cffi Session identical to x_scraper._make_session but
@@ -80,6 +120,7 @@ def make_proxied_session(auth: str, ct0: str, bearer: str):
             "x-twitter-active-user":     "yes",
             "x-twitter-auth-type":       "OAuth2Session",
             "x-twitter-client-language": "en",
+            "Referer":                   "https://x.com/search",
         })
         return s
     except ImportError:

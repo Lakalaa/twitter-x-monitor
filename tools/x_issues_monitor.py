@@ -2101,28 +2101,74 @@ def fetch_issues(
     ]
 
     search_complaints: list[dict] = []
+    _search_status = "disabled"
     try:
-        from proxy_pool import make_proxied_session
-        from x_scraper import search_keyword_complaints as _search_kw, BEARER as _BEARER
-        proxy_sess = make_proxied_session(auth, ct0, _BEARER)
-        if proxy_sess:
-            import threading as _sth
+        from x_scraper import search_keyword_complaints as _search_kw, BEARER as _BEARER, _make_session as _mk_sess
+        import threading as _sth
 
-            # Pick 20 queries per cycle, rotating through all 300+ over time
-            # Full rotation every ~15 cycles (~3-4 hours at 15-min cycle interval)
+        # ── Session strategy: try direct first, fall back to proxy ───────
+        # 1. Direct (no proxy) — works if Render's IP isn't on Twitter's blocklist
+        # 2. Webshare residential proxy — rotates IPs worldwide
+        # 3. IPRoyal residential proxy — different IP pool, second fallback
+        _sessions_to_try = []
+
+        # Direct session (no proxy)
+        _direct = _mk_sess(auth, ct0)
+        _sessions_to_try.append(("direct", _direct))
+
+        # Webshare proxy session
+        try:
+            from proxy_pool import make_proxied_session
+            _ws = make_proxied_session(auth, ct0, _BEARER)
+            if _ws:
+                _sessions_to_try.append(("webshare", _ws))
+        except Exception:
+            pass
+
+        # IPRoyal proxy session
+        try:
+            from proxy_pool import make_iproyal_session
+            _ipr = make_iproyal_session(auth, ct0, _BEARER)
+            if _ipr:
+                _sessions_to_try.append(("iproyal", _ipr))
+        except Exception:
+            pass
+
+        # Quick probe: test first query with each session, use whichever returns data
+        _probe_q = '(withdrawal OR withdraw) (stuck OR failed) crypto -is:retweet min_faves:1'
+        _active_sess = None
+        _active_name = "none"
+        for _sname, _sess in _sessions_to_try:
+            try:
+                _probe = _search_kw(_probe_q, _sess, count=5)
+                if _probe:   # got real results → use this session
+                    _active_sess = _sess
+                    _active_name = _sname
+                    search_complaints.extend(_probe)
+                    for _t in _probe:
+                        seen_ids.add(_t.get("id", ""))
+                    logging.info(f"x_issues_monitor: step0 probe OK via {_sname} ({len(_probe)} tweets)")
+                    break
+                logging.info(f"x_issues_monitor: step0 probe empty via {_sname}, trying next")
+            except Exception as _pe:
+                logging.warning(f"x_issues_monitor: step0 probe error ({_sname}): {_pe}")
+
+        if _active_sess:
+            _search_status = f"{_active_name} OK"
+
+            # Pick 20 queries per cycle, rotating through all queries over time
             q_offset = (_ROTATION_INDEX - 1) * 20
             selected_queries = [_SEARCH_QUERIES[(q_offset + i) % len(_SEARCH_QUERIES)]
-                                for i in range(20)]
+                                for i in range(20) if _SEARCH_QUERIES[(q_offset + i) % len(_SEARCH_QUERIES)] != _probe_q]
 
-            # Run searches in parallel batches of 4 to maximise throughput
-            # (4 threads × 5 batches = 20 queries; each thread sleeps 1s between calls)
+            # Run searches in parallel batches of 4 (4 threads × 5 queries = 20/cycle)
             _search_lock = _sth.Lock()
-            _search_buf: list[dict] = []
+            _search_buf: list[dict] = list(search_complaints)
 
             def _run_search_batch(queries: list[str]) -> None:
                 for q in queries:
                     try:
-                        results = _search_kw(q, proxy_sess, count=20)
+                        results = _search_kw(q, _active_sess, count=20)
                         with _search_lock:
                             for t in results:
                                 tid = t.get("id", "")
@@ -2135,7 +2181,7 @@ def fetch_issues(
                         logging.debug(f"x_issues_monitor: search query error: {_qe}")
                     time.sleep(1.2)
 
-            # Split 20 queries into 4 threads of 5 each
+            # Split queries into 4 threads of 5 each
             _batch_size = 5
             _threads = []
             for _bi in range(0, len(selected_queries), _batch_size):
@@ -2150,11 +2196,16 @@ def fetch_issues(
                 _t.join(timeout=90)   # max 90s for all searches
 
             search_complaints = _search_buf
+            _search_status = f"{_active_name} — {len(search_complaints)} tweets/{len(selected_queries)+1} queries"
             logging.info(
                 f"x_issues_monitor: step0 — {len(search_complaints)} tweets via "
-                f"{len(selected_queries)} queries ({len(_SEARCH_QUERIES)} total in pool)"
+                f"{len(selected_queries)+1} queries via {_active_name} ({len(_SEARCH_QUERIES)} total in pool)"
             )
+        else:
+            _search_status = "all sessions failed (401/empty)"
+            logging.warning("x_issues_monitor: step0 — all session types returned empty, SearchTimeline unavailable")
     except Exception as _se:
+        _search_status = f"error: {str(_se)[:60]}"
         logging.warning(f"x_issues_monitor: step0 search error: {_se}")
 
     official_tweets: list[dict] = []
@@ -2369,9 +2420,11 @@ def fetch_issues(
         "batch_size":      len(all_accounts_to_scan),
         "pool_size":       pool_size,
         "defillama_pool":  len(defillama_new),
+        "static_accounts": list(_ALL_ACCOUNTS.keys())[:5],   # sample for display
         "ids_resolved":    ids_resolved,
         "ids_failed":      ids_failed,
         "search_tweets":   len(search_complaints),
+        "search_status":   _search_status,
         "official_tweets": len(official_tweets),
         "reply_threads":   len(reply_sources),
         "raw_replies":     total_raw_replies,

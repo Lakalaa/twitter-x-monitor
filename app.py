@@ -635,6 +635,16 @@ def run_xissues_check_sync():
             from x_issues_monitor import _LAST_SCAN_STATS as _stats
             if _stats:
                 add_log(
+                    f"X issues monitor: pool={_stats.get('pool_size',0):,} accounts "
+                    f"(static={len(_stats.get('static_accounts',[]))}, "
+                    f"defillama={_stats.get('defillama_pool',0):,}, "
+                    f"batch={_stats.get('batch_size',0)})"
+                )
+                add_log(
+                    f"X issues monitor: step0 — {_stats.get('search_tweets',0)} tweets "
+                    f"via keyword search [{_stats.get('search_status','no proxy')}]"
+                )
+                add_log(
                     f"X issues monitor: step1 — {_stats.get('ids_resolved',0)} IDs resolved, "
                     f"{_stats.get('ids_failed',0)} failed, "
                     f"{_stats.get('official_tweets',0)} recent tweets"
