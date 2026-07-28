@@ -17,6 +17,7 @@ websockets==16.0
 Scweet==5.3
 curl_cffi==0.13.0
 twscrape>=0.14.0
+twikit>=2.3.0
 SQLAlchemy==2.0.49
 sqlmodel==0.0.38
 XClientTransaction==1.0.2
