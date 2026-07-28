@@ -707,9 +707,12 @@ def start_scheduler():
     # the Replit dev server doesn't compete for rate limits with production.
     on_render = bool(os.environ.get("RENDER_EXTERNAL_URL", ""))
     if on_render:
-        # Warmup: pre-cache user IDs for priority accounts before the first scan.
-        # This ensures BinanceHelpDesk, MetaMask etc. are always resolved even
-        # on a fresh deploy when the disk cache is empty.
+        # Warmup: pre-cache user IDs for any priority accounts NOT already covered
+        # by the hardcoded _KNOWN_USER_IDS in x_scraper.py (e.g. Bybit_CS, MetaMask_Support,
+        # LedgerSupport). We use a threading.Event so the first scan blocks until the
+        # warmup finishes — guaranteeing all priority IDs are in cache before cycle 1.
+        _warmup_done = threading.Event()
+
         def _warmup_priority_ids():
             try:
                 import sys as _sys
@@ -720,30 +723,35 @@ def start_scheduler():
                     return
                 session = _make_session(auth, ct0)
                 cache = _load_user_id_cache()
-                priority = [
-                    "BinanceHelpDesk", "CoinbaseSupport", "KrakenSupport", "Bybit_CS",
-                    "MetaMask_Support", "TrustWalletApp", "LedgerSupport",
-                    "AaveAave", "JupiterExchange", "arbitrum", "base", "circle",
-                    "OKXSupport", "Phantom", "Uniswap", "Tether_to",
+                # Only resolve accounts whose IDs are NOT already hardcoded or cached
+                need_resolve = [
+                    "Bybit_CS", "MetaMask_Support", "LedgerSupport", "OKXSupport",
+                    "Tether_to", "driftprotocol", "HyperliquidX", "KucoinSupport",
+                    "cryptocom_cares", "BitgetWallet", "Uniswap", "MakerDAO",
                 ]
                 resolved = 0
-                for acct in priority:
+                for acct in need_resolve:
                     if acct.lower() not in cache:
                         uid = get_user_id(acct, session, cache)
                         if uid:
                             resolved += 1
-                            time.sleep(0.6)   # gentle pacing — no rush at startup
+                        time.sleep(1.0)   # gentle pacing — 1 req/sec
                 if resolved:
                     _save_user_id_cache(cache)
-                    add_log(f"X issues: pre-cached {resolved} priority account IDs")
+                    add_log(f"X issues: warmup resolved {resolved} additional priority account IDs")
             except Exception as _e:
                 add_log(f"X issues warmup error: {_e}")
+            finally:
+                _warmup_done.set()  # always signal done, even on error
 
         threading.Thread(target=_warmup_priority_ids, daemon=True).start()
-        time.sleep(12)   # let warmup finish before first scan fires
+
+        def _run_xissues_after_warmup():
+            _warmup_done.wait(timeout=25)   # wait up to 25s for warmup, then proceed
+            run_xissues_check_sync()
 
         schedule.every(15).minutes.do(run_xissues_check_sync)
-        threading.Thread(target=run_xissues_check_sync, daemon=True).start()
+        threading.Thread(target=_run_xissues_after_warmup, daemon=True).start()
         add_log(f"Scheduler started — Twitter every {interval} min, Feed every 30 min, X-issues every 15 min (user complaints only)")
     else:
         add_log(f"Scheduler started (dev mode) — Twitter every {interval} min, Feed every 30 min. X-issues DISABLED on dev to preserve Render token rate limits.")
