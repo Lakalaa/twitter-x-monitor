@@ -1,53 +1,71 @@
 ---
 name: X Scraper Architecture
-description: Core architecture of the Twitter/X scraper — endpoints, QIDs, proxy setup, account pool sources, and search query structure.
+description: Full architecture of the Twitter/X crypto complaint monitor deployed on Render
 ---
 
-# X Scraper Architecture
+## Service
+- Render service ID: `srv-d7s2rud7vvec738tlff0`
+- URL: `https://twitter-x-monitor.onrender.com`
+- GitHub: `https://github.com/Lakalaa/twitter-x-monitor` (branch: main, auto-deploy)
+- Wrong service to ignore: `srv-d7s3ob8g4nts73d2tdsg` / `monitor-bot-wfqc.onrender.com`
 
-## Endpoints & IP restrictions
-- **UserByScreenName** + **UserTweets** + **TweetDetail** — work from GCP/datacenter IPs ✅
-- **SearchTimeline** — blocked from GCP/datacenter IPs; requires residential proxy ⚠️
+## Search Engine Priority (tools/twitter_search.py)
 
-## Current GraphQL QIDs (extracted from main.933c177a.js on 2026-07-28)
-- `UserByScreenName`: `Gb-d6r0vxPOADdG62OEBpQ` (verified working)
-- `UserTweets`: `eoJ5zbv51Z_KVl81v9PmLQ` (verified working)
-- `TweetDetail`: `559hs_YZNV4IgA3Z6zIIuw` (verified working)
-- `SearchTimeline`: `BGd0T_j7oVwlW5U79tO_0A` (extracted; proxy connectivity TBD)
+1. **SocialData.tools** (PRIMARY — CONFIRMED WORKING from Render)
+   - Env var: `SOCIALDATA_API_KEY`
+   - Key format: `<digits>|<long_token>` (Laravel Sanctum)
+   - Endpoint: `GET https://api.socialdata.tools/twitter/search?query=...&type=Latest`
+   - Header: `Authorization: Bearer {key}`
+   - Response field: `tweets[].full_text`, `tweets[].user.screen_name`, `tweets[].id_str`
+   - 8 queries in parallel, ~0.15s pacing between them
+   - Works from ANY IP — no blocking possible
+   - **Why:** All other methods (direct, Webshare proxy, IPRoyal, twikit, twscrape) return 0 from Render datacenter IPs. Twitter specifically blocks SearchTimeline from non-browser sessions on datacenter IPs.
 
-**Why:** Twitter rotates QIDs with every bundle deployment (~weeks). When any endpoint returns 404, call `_auto_refresh_qids()` in x_scraper.py — it fetches the live bundle via proxy and re-extracts all QIDs.
+2. **twikit** (free fallback — bootstrapped via Webshare proxy for XClientTransaction)
+   - Currently fails from Render — XCT `ondemand.s.XXXa.js` ref not found in proxied home page
+   - Keep in requirements.txt for future retry
 
-**How to extract fresh QIDs manually:**
-1. Use Webshare proxy `p.webshare.io:80` with curl_cffi (credentials from `WEBSHARE_API_KEY`)
-2. Fetch `https://x.com/explore` to get current bundle URL (e.g. `main.933c177a.js`)
-3. Fetch the bundle and grep for `queryId:"XXX",operationName:"SearchTimeline"` pattern
+3. **Webshare / IPRoyal residential proxy** — currently return empty (Twitter blocks these too for search)
 
-## Proxy setup (Webshare residential)
-- Host: `p.webshare.io:80`
-- Credentials from API: `GET https://proxy.webshare.io/api/v2/proxy/config/` with `Authorization: Token $WEBSHARE_API_KEY`
-- Returns `username` and `password` fields (cached 6h in proxy_pool.py)
-- `make_proxied_session(auth, ct0, bearer)` in `tools/proxy_pool.py` creates a proxied curl_cffi session
-- SearchTimeline via proxy returning 404 empty body — likely Cloudflare challenge on proxy IP; investigate response format
+## Confirmed Blocked from Render (datacenter IPs)
+- Direct session (GraphQL SearchTimeline): empty
+- Webshare residential proxy: empty
+- IPRoyal residential proxy: "no proxy" (key format issue)
+- twscrape: event loop timeout
+- twikit: XClientTransaction init fails
 
-## Account pool structure (7,040+ total)
-- **Static list**: 103 categories, 1,062 accounts in `_ACCOUNTS` dict
-- **DeFiLlama**: ~5,978 additional protocol handles from `api.llama.fi/protocols`, refreshes every 12h (one API call, no key)
-- **CoinGecko full scraper**: ALL ~17,851 coins scraped in background (Phase 1: fetch all IDs sorted by mktcap ~3min; Phase 2: fetch handles at 1/2.5s ~3h), weekly refresh, saves progress every 50 coins
-- **CoinGecko dynamic**: trending + 6 rotating categories + top 24h gainers, refreshes every 4h
-- **Total pool**: 7,040+ static+DeFiLlama, eventually 10,000+ as CG full scraper completes
+## Query Counts
+- Step 0 (global search): 40 queries/cycle via search_all()
+- Scan cycle: every 15 min
+- DeFiLlama: 7782 protocols, 103 categories
 
-## SearchTimeline queries (154 total, 20/cycle, parallel 4 threads × 5 queries)
-- Tier 1 (16): broad complaints — catch any crypto project
-- Tier 2 (22): every major L1/L2 chain (ETH/SOL/BNB/MATIC/ARB/OP/BASE/AVAX/TRX/TON...)
-- Tier 3 (42): CEX + wallet + DeFi protocol-specific complaints
-- Tier 4 (30): NFT/gaming, stablecoins/RWA, memecoins, perps/derivatives
-- Tier 5 (38): 9 non-English languages (ES/PT/KO/ZH/TR/RU/ID/HI/VI/AR/JA)
-- Tier 6 (12): emerging categories (AI agents, DePIN, SocialFi, prediction markets)
-- Full rotation every ~8 cycles (~2 hours)
+## Auth env vars on Render
+- `TWITTER_AUTH_TOKEN` — raw token (not used by scraper directly)
+- `TWITTER_AUTH_TOKEN_COOKIE` — what x_scraper.py reads (same value as above)
+- `TWITTER_CT0` — ct0 cookie
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `WEBSHARE_API_KEY`
+- `IPROYAL_API_KEY`
+- `SOCIALDATA_API_KEY` — PRIMARY search engine key
 
-## screen_name location in responses
-- `UserTweets`: screen_name at `result.core.user_results.result.core.screen_name`
-- `TweetDetail`: screen_name at `result.core.user_results.result.legacy.screen_name`
+## x_scraper.py QIDs (confirmed from bundle main.d15fd02a.js, 2026-07-28)
+- UserTweets:       `eoJ5zbv51Z`
+- UserByScreenName: `Gb-d6r0vx`
+- TweetDetail:      `559hs_YZ`
+- SearchTimeline:   `BGd0T_j7`  (also hardcoded in twitter_search.py)
 
-## Known hardcoded IDs (zero API calls)
-14 priority accounts in `_KNOWN_USER_IDS` in x_scraper.py — BinanceHelpDesk, CoinbaseSupport, KrakenSupport, TrustWalletApp, AaveAave, JupiterExchange, Arbitrum, Base, Circle, Uniswap, Phantom, HyperliquidX, MagicEden, PeckShieldAlert.
+## Confirmed Working (2026-07-28)
+- SocialData 40-query cycle → 682 tweets per scan
+- 1 complaint sent to Telegram per confirmed scan
+- Telegram conflict resolved by deleting wrong service `srv-d7s3ob8g4nts73d2tdsg` (not just suspending)
+
+## Bug fixed
+- `x_issues_monitor.py` line 2368: `_ALL_ACCOUNTS.keys()` → `_ALL_ACCOUNTS` (it's a list, not dict)
+
+## Notes
+- `_load_creds()` in x_scraper.py reads `TWITTER_AUTH_TOKEN_COOKIE` (not `TWITTER_AUTH_TOKEN`)
+- screen_name lookup quirk: some accounts have location in unexpected field
+- Hardcoded user IDs for 14 priority accounts in x_issues_monitor.py `_KNOWN_USER_IDS`
+- 5 missing IDs still: Bybit_CS, MetaMask_Support, LedgerSupport, OKXSupport, Tether_to
+- `STATE["last_check"]` in app.py belongs to the OLD Scweet scheduler, not X issues monitor — always None for X-issues scans; use logs to verify scan health instead
