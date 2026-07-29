@@ -1290,6 +1290,13 @@ def _run_bg_enrichment() -> None:
 _BG_ENRICHED = _load_bg_cache()
 _run_bg_enrichment()
 
+# Start query_builder background refresh (ALL coins + DeFiLlama names)
+try:
+    from query_builder import start_background_refresh as _qb_start
+    _qb_start()
+except Exception as _qb_err:
+    logging.warning(f"x_issues_monitor: query_builder startup error: {_qb_err}")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DeFiLlama protocol enrichment — 7,782 protocols, ONE API call, no key needed
 # Fetches all DeFiLlama protocols and extracts Twitter handles for any protocol
@@ -2106,62 +2113,22 @@ def fetch_issues(
         from twitter_search import search_all as _search_all
         import threading as _sth2, queue as _q2
 
-        # ── Build full query list: ALL static + dynamic coin-name queries ──────
-        # Static: every query in _SEARCH_QUERIES fires every single cycle (no rotation).
-        # Dynamic: top 500 coins from CoinGecko → targeted complaint queries per coin.
-        # Together this covers millions of projects — any coin anyone complains about.
-        all_queries: list[str] = list(_SEARCH_QUERIES)
-
-        # Generate dynamic coin-name queries from CoinGecko top-500
+        # ── Build full query list via query_builder ────────────────────────────
+        # query_builder covers EVERY project on earth:
+        #   • 300 static queries (all chains, CEXes, wallets, DeFi, staking,
+        #     yield, compute/DePIN, AI, NFT, gaming, stablecoins, 12 languages)
+        #   • Top 500 CoinGecko coins every cycle (always fresh)
+        #   • Rotating 600/cycle from full 17,851 CoinGecko universe
+        #   • Rotating 400/cycle from all 7,782 DeFiLlama protocols
+        #   • DexScreener trending (newest launches)
+        #   • CoinGecko trending (viral right now)
+        # Total: ~3,000-4,000 queries per cycle = 300,000+ tweets scanned.
         try:
-            _cg_top = _cg_get(
-                "https://api.coingecko.com/api/v3/coins/markets"
-                "?vs_currency=usd&order=market_cap_desc"
-                "&per_page=250&page=1&sparkline=false"
-            ) or []
-            _cg_top2 = _cg_get(
-                "https://api.coingecko.com/api/v3/coins/markets"
-                "?vs_currency=usd&order=market_cap_desc"
-                "&per_page=250&page=2&sparkline=false"
-            ) or []
-            for _coin in (_cg_top + _cg_top2):
-                _sym  = (_coin.get("symbol") or "").upper()
-                _name = (_coin.get("name")   or "")
-                if not _sym or len(_sym) > 8:
-                    continue
-                # Two queries per coin: ticker-based and name-based
-                if len(_sym) >= 2:
-                    all_queries.append(
-                        f'(${_sym} OR "{_sym}") '
-                        f'(withdrawal OR withdraw OR stuck OR failed OR scam OR hack OR rug OR drained OR missing) '
-                        f'-is:retweet'
-                    )
-                if _name and _name.lower() != _sym.lower() and len(_name) > 2:
-                    all_queries.append(
-                        f'"{_name}" '
-                        f'(withdrawal OR funds OR scam OR hack OR rug OR stuck OR drained OR missing) '
-                        f'-is:retweet min_faves:1'
-                    )
-            logging.info(
-                f"x_issues_monitor: step0 — {len(all_queries)} total queries "
-                f"({len(_SEARCH_QUERIES)} static + {len(all_queries)-len(_SEARCH_QUERIES)} dynamic coin)"
-            )
-        except Exception as _cge:
-            logging.warning(f"x_issues_monitor: step0 coin query gen error: {_cge}")
-
-        # Also add DeFiLlama protocol name queries (top 200 by TVL)
-        try:
-            _dl_all = _dl_get_protocols() if callable(globals().get("_dl_get_protocols")) else []
-            for _proto in (_dl_all or [])[:200]:
-                _pname = (_proto.get("name") or "").strip()
-                if _pname and len(_pname) > 2:
-                    all_queries.append(
-                        f'"{_pname}" '
-                        f'(withdrawal OR funds OR hack OR exploit OR rug OR stuck OR failed) '
-                        f'-is:retweet min_faves:1'
-                    )
-        except Exception:
-            pass
+            from query_builder import build_queries as _build_queries
+            all_queries = _build_queries(cycle_idx=_ROTATION_INDEX)
+        except Exception as _qbe:
+            logging.warning(f"x_issues_monitor: query_builder error: {_qbe} — falling back to static list")
+            all_queries = list(_SEARCH_QUERIES)
 
         # Run search_all in a separate thread — prevents asyncio conflicts
         # 16 parallel workers, 100 tweets/query, 5-minute timeout
